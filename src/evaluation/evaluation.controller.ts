@@ -1,9 +1,4 @@
-import {
-  BadRequestException,
-  Body,
-  Controller,
-  Post,
-} from '@nestjs/common';
+import { BadRequestException, Body, Controller, Post } from '@nestjs/common';
 import {
   IsArray,
   IsOptional,
@@ -12,6 +7,7 @@ import {
   MinLength,
 } from 'class-validator';
 import { EvaluationService } from './evaluation.service';
+import type { TextSource } from './types';
 
 class ScoreRequestDto {
   @IsString()
@@ -100,10 +96,7 @@ export class EvaluationController {
     const score = await this.evaluationService.scoreSubmission(
       dto.submissionId,
       this.buildSource(dto.reference, dto.referenceFilePath, 'reference'),
-      this.buildOptionalSource(
-        dto.answer,
-        dto.answerFilePath,
-      ),
+      this.buildOptionalSource(dto.answer, dto.answerFilePath),
     );
     return { score };
   }
@@ -146,9 +139,9 @@ export class EvaluationController {
   }
 
   private buildBatchSources(
-    answers?: string[],
-    answerFilePaths?: string[],
-  ) {
+    answers: string[] | undefined,
+    answerFilePaths: string[] | undefined,
+  ): TextSource[] {
     const textList = answers ?? [];
     const filePathList = answerFilePaths ?? [];
 
@@ -169,15 +162,11 @@ export class EvaluationController {
     }
 
     const maxLength = Math.max(textList.length, filePathList.length);
-    const sources = [];
+    const sources: TextSource[] = [];
 
     for (let index = 0; index < maxLength; index += 1) {
       sources.push(
-        this.buildSource(
-          textList[index],
-          filePathList[index],
-          'answer',
-        ),
+        this.buildSource(textList[index], filePathList[index], 'answer'),
       );
     }
 

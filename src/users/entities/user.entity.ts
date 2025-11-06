@@ -1,55 +1,35 @@
-import {
-  Column,
-  CreateDateColumn,
-  Entity,
-  Index,
-  OneToMany,
-  PrimaryGeneratedColumn,
-  UpdateDateColumn,
-} from 'typeorm';
+import { Column, Entity, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
 import type { Course } from '../../courses/entities/course.entity';
-import type { Task } from '../../tasks/entities/task.entity';
-import type { Submission } from '../../submissions/entities/submission.entity';
+import type { StudentSubmission } from '../../submissions/entities/student-submission.entity';
 
 export enum UserRole {
   Teacher = 'teacher',
   Student = 'student',
 }
 
-@Entity({ name: 'users' })
-@Index('IDX_USERS_EMAIL', ['email'], { unique: true })
+@Entity('users')
 export class User {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
-  @Column({ unique: true })
+  @Column({ name: 'full_name', type: 'text' })
+  fullName!: string;
+
+  @Column({ type: 'text', unique: true })
   email!: string;
 
-  @Column()
-  password!: string;
+  @Column({ name: 'password_hash', type: 'text' })
+  passwordHash!: string;
 
-  @Column({
-    type: 'enum',
-    enum: UserRole,
-    default: UserRole.Student,
-  })
+  @Column({ type: 'text' })
   role!: UserRole;
 
-  @Column({ name: 'hashed_refresh_token', nullable: true })
+  @Column({ name: 'hashed_refresh_token', type: 'text', nullable: true })
   hashedRefreshToken?: string | null;
-
-  @CreateDateColumn({ name: 'created_at' })
-  createdAt!: Date;
-
-  @UpdateDateColumn({ name: 'updated_at' })
-  updatedAt!: Date;
 
   @OneToMany('Course', 'teacher')
   courses?: Course[];
 
-  @OneToMany('Task', 'creator')
-  tasks?: Task[];
-
-  @OneToMany('Submission', 'student')
-  submissions?: Submission[];
+  @OneToMany('StudentSubmission', 'student')
+  submissions?: StudentSubmission[];
 }

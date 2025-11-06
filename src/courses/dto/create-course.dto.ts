@@ -1,4 +1,4 @@
 export interface CreateCourseDto {
-  title: string;
+  name: string;
   description?: string;
 }

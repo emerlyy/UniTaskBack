@@ -4,7 +4,7 @@ import { Repository } from 'typeorm';
 import { CreateUserDto } from './dto/create-user.dto';
 import { User, UserRole } from './entities/user.entity';
 
-export type SafeUser = Omit<User, 'password' | 'hashedRefreshToken'>;
+export type SafeUser = Omit<User, 'passwordHash' | 'hashedRefreshToken'>;
 
 @Injectable()
 export class UsersService {
@@ -59,7 +59,7 @@ export class UsersService {
     }
 
     const {
-      password: _password,
+      passwordHash: _password,
       hashedRefreshToken: _hashedRefreshToken,
       ...safe
     } = user;

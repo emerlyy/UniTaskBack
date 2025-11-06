@@ -7,10 +7,12 @@ import {
 } from '@nestjs/common';
 import { join, isAbsolute } from 'node:path';
 import { SubmissionsService } from '../submissions/submissions.service';
+import type { StudentSubmission } from '../submissions/entities/student-submission.entity';
 import {
   UnsupportedMimeTypeError,
   extractText,
 } from '../utils/text-extraction.util';
+import type { TextSource } from './types';
 
 type TransformersModule = typeof import('@xenova/transformers');
 
@@ -40,11 +42,6 @@ interface PipelineOutputWithMask {
   attention_mask?: unknown;
   last_hidden_state?: unknown;
 }
-
-type TextSource = {
-  text?: string;
-  filePath?: string;
-};
 
 const DEFAULT_MODEL_ID =
   process.env.EVAL_MODEL_ID ?? 'Xenova/paraphrase-MiniLM-L6-v2';
@@ -82,10 +79,7 @@ export class EvaluationService implements OnModuleInit {
     return { embedding: normalized };
   }
 
-  async score(
-    reference: TextSource,
-    answer: TextSource,
-  ): Promise<number> {
+  async score(reference: TextSource, answer: TextSource): Promise<number> {
     const [referenceText, answerText] = await Promise.all([
       this.resolveTextSource(reference, 'reference'),
       this.resolveTextSource(answer, 'answer'),
@@ -123,26 +117,14 @@ export class EvaluationService implements OnModuleInit {
       'reference',
     );
 
-    const effectiveAnswerSource: TextSource =
-      overrideAnswerSource && (overrideAnswerSource.text ||
-      overrideAnswerSource.filePath)
-        ? overrideAnswerSource
-        : {
-            text: submission.answerText ?? undefined,
-            filePath: submission.answerFilePath ?? undefined,
-          };
-
-    const answerText = await this.resolveTextSource(
-      effectiveAnswerSource,
-      'answer',
-    );
+    const answerText =
+      overrideAnswerSource &&
+      (overrideAnswerSource.text || overrideAnswerSource.filePath)
+        ? await this.resolveTextSource(overrideAnswerSource, 'answer')
+        : await this.extractSubmissionFilesText(submission);
 
     const score = await this.scoreTexts(referenceText, answerText);
-    await this.submissionsService.updateAutoScore(
-      submissionId,
-      score,
-      answerText,
-    );
+    await this.submissionsService.updateAutoScore(submissionId, score);
 
     return score;
   }
@@ -307,7 +289,7 @@ export class EvaluationService implements OnModuleInit {
       for (let dimIndex = 0; dimIndex < dimension; dimIndex += 1) {
         const rawValue = hiddenStateData[offset + dimIndex];
         const numericValue =
-          typeof rawValue === 'bigint' ? Number(rawValue) : (rawValue as number);
+          typeof rawValue === 'bigint' ? Number(rawValue) : rawValue;
         output[dimIndex] += numericValue;
       }
     }
@@ -366,6 +348,23 @@ export class EvaluationService implements OnModuleInit {
     return embedding;
   }
 
+  private async extractSubmissionFilesText(
+    submission: StudentSubmission,
+  ): Promise<string> {
+    if (!submission.files || submission.files.length === 0) {
+      throw new BadRequestException('Submission has no files to evaluate');
+    }
+
+    const chunks: string[] = [];
+    for (const file of submission.files) {
+      chunks.push(
+        await this.resolveTextSource({ filePath: file.fileUrl }, 'answer'),
+      );
+    }
+
+    return chunks.join('\n\n');
+  }
+
   private async resolveTextSource(
     source: TextSource,
     label: 'reference' | 'answer',
@@ -403,14 +402,17 @@ export class EvaluationService implements OnModuleInit {
         `Failed to extract ${label} text from ${absolutePath}`,
         error instanceof Error ? error.stack : undefined,
       );
-      throw new ServiceUnavailableException(
-        `Failed to extract ${label} text`,
-      );
+      throw new ServiceUnavailableException(`Failed to extract ${label} text`);
     }
   }
 
   private resolveFilePath(filePath: string): string {
-    return isAbsolute(filePath) ? filePath : join(process.cwd(), filePath);
+    if (isAbsolute(filePath)) {
+      return filePath;
+    }
+
+    const sanitized = filePath.replace(/^[\\/]+/, '');
+    return join(process.cwd(), sanitized);
   }
 
   private async scoreTexts(

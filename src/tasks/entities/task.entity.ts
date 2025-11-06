@@ -1,33 +1,25 @@
 import {
   Column,
-  CreateDateColumn,
   Entity,
   JoinColumn,
   ManyToOne,
   OneToMany,
   PrimaryGeneratedColumn,
-  UpdateDateColumn,
 } from 'typeorm';
 import { Course } from '../../courses/entities/course.entity';
-import { User } from '../../users/entities/user.entity';
-import type { Submission } from '../../submissions/entities/submission.entity';
+import type { StudentSubmission } from '../../submissions/entities/student-submission.entity';
 
-@Entity({ name: 'tasks' })
+export enum TaskStatus {
+  Draft = 'draft',
+  Active = 'active',
+  Review = 'review',
+  Completed = 'completed',
+}
+
+@Entity('tasks')
 export class Task {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
-
-  @Column()
-  title!: string;
-
-  @Column({ nullable: true })
-  description?: string | null;
-
-  @Column({ name: 'due_date', type: 'timestamptz', nullable: true })
-  dueDate?: Date | null;
-
-  @Column({ name: 'attachment_path', nullable: true })
-  attachmentPath?: string | null;
 
   @Column({ name: 'course_id' })
   courseId!: string;
@@ -38,21 +30,24 @@ export class Task {
   @JoinColumn({ name: 'course_id' })
   course!: Course;
 
-  @Column({ name: 'creator_id' })
-  creatorId!: string;
+  @Column({ type: 'text' })
+  title!: string;
 
-  @ManyToOne(() => User, (user) => user.tasks, {
-    onDelete: 'CASCADE',
-  })
-  @JoinColumn({ name: 'creator_id' })
-  creator!: User;
+  @Column({ type: 'text', nullable: true })
+  description?: string | null;
 
-  @OneToMany('Submission', 'task')
-  submissions?: Submission[];
+  @Column({ type: 'timestamptz' })
+  deadline!: Date;
 
-  @CreateDateColumn({ name: 'created_at' })
-  createdAt!: Date;
+  @Column({ name: 'late_penalty_percent', type: 'int', default: 0 })
+  latePenaltyPercent!: number;
 
-  @UpdateDateColumn({ name: 'updated_at' })
-  updatedAt!: Date;
+  @Column({ name: 'reference_file_url', type: 'text' })
+  referenceFileUrl!: string;
+
+  @Column({ type: 'text' })
+  status!: TaskStatus;
+
+  @OneToMany('StudentSubmission', 'task')
+  submissions?: StudentSubmission[];
 }

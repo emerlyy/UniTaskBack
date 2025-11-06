@@ -38,8 +38,9 @@ export class AuthService {
     );
 
     const user = await this.usersService.create({
+      fullName: registerDto.fullName,
       email: normalizedEmail,
-      password: hashedPassword,
+      passwordHash: hashedPassword,
       role: registerDto.role,
     });
 
@@ -56,7 +57,7 @@ export class AuthService {
 
     const passwordMatches = await bcrypt.compare(
       loginDto.password,
-      user.password,
+      user.passwordHash,
     );
 
     if (!passwordMatches) {

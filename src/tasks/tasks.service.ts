@@ -7,7 +7,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Course } from '../courses/entities/course.entity';
-import { Task } from './entities/task.entity';
+import { Task, TaskStatus } from './entities/task.entity';
 import { CreateTaskDto } from './dto/create-task.dto';
 
 @Injectable()
@@ -19,43 +19,48 @@ export class TasksService {
     private readonly coursesRepository: Repository<Course>,
   ) {}
 
-  async createTask(
-    courseId: string,
-    teacherId: string,
-    createTaskDto: CreateTaskDto,
-    attachmentPath: string | null = null,
-  ): Promise<Task> {
+  async createTask(dto: CreateTaskDto, teacherId: string): Promise<Task> {
     const course = await this.coursesRepository.findOne({
-      where: { id: courseId },
-      select: {
-        id: true,
-        teacherId: true,
-      },
+      where: { id: dto.courseId },
     });
 
     if (!course) {
-      throw new NotFoundException(`Course ${courseId} not found`);
+      throw new NotFoundException(`Course ${dto.courseId} not found`);
     }
 
     if (course.teacherId !== teacherId) {
       throw new ForbiddenException('Only the course owner can create tasks');
     }
 
-    const dueDate = this.parseDueDate(createTaskDto.dueDate);
+    const deadline = this.parseDeadline(dto.deadline);
 
     const task = this.tasksRepository.create({
-      title: createTaskDto.title,
-      description: createTaskDto.description,
-      dueDate,
-      courseId,
-      creatorId: teacherId,
-      attachmentPath,
+      courseId: dto.courseId,
+      title: dto.title,
+      description: dto.description ?? null,
+      deadline,
+      latePenaltyPercent: dto.latePenaltyPercent ?? 0,
+      referenceFileUrl: dto.referenceFileUrl,
+      status: dto.status ?? TaskStatus.Draft,
     });
 
     return this.tasksRepository.save(task);
   }
 
-  async findTasksByCourse(courseId: string): Promise<Task[]> {
+  async findById(id: string): Promise<Task> {
+    const task = await this.tasksRepository.findOne({
+      where: { id },
+      relations: ['course'],
+    });
+
+    if (!task) {
+      throw new NotFoundException(`Task ${id} not found`);
+    }
+
+    return task;
+  }
+
+  async findByCourse(courseId: string): Promise<Task[]> {
     const courseExists = await this.coursesRepository.exist({
       where: { id: courseId },
     });
@@ -66,22 +71,18 @@ export class TasksService {
 
     return this.tasksRepository.find({
       where: { courseId },
-      order: { dueDate: 'ASC' },
+      order: { deadline: 'ASC' },
     });
   }
 
-  private parseDueDate(dueDate: CreateTaskDto['dueDate']): Date | null {
-    if (!dueDate) {
-      return null;
+  private parseDeadline(deadline: CreateTaskDto['deadline']): Date {
+    if (deadline instanceof Date) {
+      return deadline;
     }
 
-    if (dueDate instanceof Date) {
-      return dueDate;
-    }
-
-    const parsed = new Date(dueDate);
+    const parsed = new Date(deadline);
     if (Number.isNaN(parsed.getTime())) {
-      throw new BadRequestException('Invalid due date');
+      throw new BadRequestException('Invalid deadline');
     }
 
     return parsed;

@@ -1,18 +1,25 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Submission } from './entities/submission.entity';
+import {
+  StudentSubmission,
+  SubmissionStatus,
+} from './entities/student-submission.entity';
+import { SubmissionFile } from './entities/submission-file.entity';
 
 @Injectable()
 export class SubmissionsService {
   constructor(
-    @InjectRepository(Submission)
-    private readonly submissionsRepository: Repository<Submission>,
+    @InjectRepository(StudentSubmission)
+    private readonly submissionsRepository: Repository<StudentSubmission>,
+    @InjectRepository(SubmissionFile)
+    private readonly submissionFilesRepository: Repository<SubmissionFile>,
   ) {}
 
-  async findById(id: string): Promise<Submission> {
+  async findById(id: string): Promise<StudentSubmission> {
     const submission = await this.submissionsRepository.findOne({
       where: { id },
+      relations: ['files', 'student', 'task'],
     });
 
     if (!submission) {
@@ -22,18 +29,43 @@ export class SubmissionsService {
     return submission;
   }
 
+  async save(submission: StudentSubmission): Promise<StudentSubmission> {
+    return this.submissionsRepository.save(submission);
+  }
+
+  async saveFiles(
+    submissionId: string,
+    fileUrls: string[],
+  ): Promise<SubmissionFile[]> {
+    const entities = fileUrls.map((fileUrl) =>
+      this.submissionFilesRepository.create({
+        submissionId,
+        fileUrl,
+      }),
+    );
+
+    return this.submissionFilesRepository.save(entities);
+  }
+
   async updateAutoScore(
-    id: string,
+    submissionId: string,
     autoScore: number,
-    answerText?: string,
-  ): Promise<Submission> {
-    const updatePayload: Partial<Submission> = { autoScore };
+  ): Promise<StudentSubmission> {
+    await this.submissionsRepository.update(submissionId, {
+      autoScore,
+      status: SubmissionStatus.Graded,
+    });
+    return this.findById(submissionId);
+  }
 
-    if (answerText !== undefined) {
-      updatePayload.answerText = answerText;
-    }
-
-    await this.submissionsRepository.update(id, updatePayload);
-    return this.findById(id);
+  async updateFinalScore(
+    submissionId: string,
+    finalScore: number,
+  ): Promise<StudentSubmission> {
+    await this.submissionsRepository.update(submissionId, {
+      finalScore,
+      status: SubmissionStatus.Graded,
+    });
+    return this.findById(submissionId);
   }
 }
