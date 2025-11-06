@@ -6,9 +6,12 @@ import { EvaluationService } from '../src/evaluation/evaluation.service';
 import { SubmissionsService } from '../src/submissions/submissions.service';
 
 class StubSubmissionsService {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async updateAutoScore(submissionId: string, autoScore: number) {
-    return Promise.resolve();
+  async updateAutoScore(
+    submissionId: string,
+    autoScore: number,
+    answerText?: string,
+  ) {
+    return Promise.resolve({ submissionId, autoScore, answerText });
   }
 }
 
@@ -41,7 +44,10 @@ async function main() {
     const submissionText =
       'Deep learning models can not capture semantic relationships between sentences.';
 
-    const score = await evaluationService.score(referenceText, submissionText);
+    const score = await evaluationService.score(
+      { text: referenceText },
+      { text: submissionText },
+    );
 
     console.log('Reference:', referenceText);
     console.log('Submission:', submissionText);

@@ -21,6 +21,9 @@ export class Submission {
   @Column({ name: 'student_id' })
   studentId!: string;
 
+  @Column({ name: 'answer_file_path', type: 'text', nullable: true })
+  answerFilePath?: string | null;
+
   @Column({ name: 'answer_text', type: 'text', nullable: true })
   answerText?: string | null;
 

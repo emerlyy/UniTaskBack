@@ -1,25 +1,60 @@
-import { Body, Controller, Post } from '@nestjs/common';
-import { IsArray, IsString, MinLength, IsUUID } from 'class-validator';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Post,
+} from '@nestjs/common';
+import {
+  IsArray,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MinLength,
+} from 'class-validator';
 import { EvaluationService } from './evaluation.service';
 
 class ScoreRequestDto {
   @IsString()
+  @IsOptional()
   @MinLength(1)
-  reference!: string;
+  reference?: string;
 
   @IsString()
+  @IsOptional()
   @MinLength(1)
-  answer!: string;
+  referenceFilePath?: string;
+
+  @IsString()
+  @IsOptional()
+  @MinLength(1)
+  answer?: string;
+
+  @IsString()
+  @IsOptional()
+  @MinLength(1)
+  answerFilePath?: string;
 }
 
 class ScoreBatchRequestDto {
   @IsString()
+  @IsOptional()
   @MinLength(1)
-  reference!: string;
+  reference?: string;
+
+  @IsString()
+  @IsOptional()
+  @MinLength(1)
+  referenceFilePath?: string;
 
   @IsArray()
+  @IsOptional()
   @IsString({ each: true })
-  answers!: string[];
+  answers?: string[];
+
+  @IsArray()
+  @IsOptional()
+  @IsString({ each: true })
+  answerFilePaths?: string[];
 }
 
 class ScoreSubmissionDto extends ScoreRequestDto {
@@ -33,15 +68,29 @@ export class EvaluationController {
 
   @Post('score')
   async score(@Body() dto: ScoreRequestDto) {
-    const score = await this.evaluationService.score(dto.reference, dto.answer);
+    const score = await this.evaluationService.score(
+      this.buildSource(dto.reference, dto.referenceFilePath, 'reference'),
+      this.buildSource(dto.answer, dto.answerFilePath, 'answer'),
+    );
     return { score };
   }
 
   @Post('score-batch')
   async scoreBatch(@Body() dto: ScoreBatchRequestDto) {
-    const scores = await this.evaluationService.scoreBatch(
+    const referenceSource = this.buildSource(
       dto.reference,
+      dto.referenceFilePath,
+      'reference',
+    );
+
+    const answerSources = this.buildBatchSources(
       dto.answers,
+      dto.answerFilePaths,
+    );
+
+    const scores = await this.evaluationService.scoreBatch(
+      referenceSource,
+      answerSources,
     );
     return { scores };
   }
@@ -50,9 +99,88 @@ export class EvaluationController {
   async scoreSubmission(@Body() dto: ScoreSubmissionDto) {
     const score = await this.evaluationService.scoreSubmission(
       dto.submissionId,
-      dto.reference,
-      dto.answer,
+      this.buildSource(dto.reference, dto.referenceFilePath, 'reference'),
+      this.buildOptionalSource(
+        dto.answer,
+        dto.answerFilePath,
+      ),
     );
     return { score };
+  }
+
+  private buildSource(
+    text: string | undefined,
+    filePath: string | undefined,
+    label: 'reference' | 'answer',
+  ) {
+    const trimmedText = text?.trim();
+    const trimmedPath = filePath?.trim();
+
+    if (!trimmedText && !trimmedPath) {
+      throw new BadRequestException(
+        `Provide either ${label} text or ${label}FilePath`,
+      );
+    }
+
+    return {
+      text: trimmedText,
+      filePath: trimmedPath,
+    };
+  }
+
+  private buildOptionalSource(
+    text: string | undefined,
+    filePath: string | undefined,
+  ) {
+    const trimmedText = text?.trim();
+    const trimmedPath = filePath?.trim();
+
+    if (!trimmedText && !trimmedPath) {
+      return undefined;
+    }
+
+    return {
+      text: trimmedText,
+      filePath: trimmedPath,
+    };
+  }
+
+  private buildBatchSources(
+    answers?: string[],
+    answerFilePaths?: string[],
+  ) {
+    const textList = answers ?? [];
+    const filePathList = answerFilePaths ?? [];
+
+    if (!textList.length && !filePathList.length) {
+      throw new BadRequestException(
+        'Provide answers or answerFilePaths for batch scoring',
+      );
+    }
+
+    if (
+      textList.length &&
+      filePathList.length &&
+      textList.length !== filePathList.length
+    ) {
+      throw new BadRequestException(
+        'answers and answerFilePaths must be the same length when both are provided',
+      );
+    }
+
+    const maxLength = Math.max(textList.length, filePathList.length);
+    const sources = [];
+
+    for (let index = 0; index < maxLength; index += 1) {
+      sources.push(
+        this.buildSource(
+          textList[index],
+          filePathList[index],
+          'answer',
+        ),
+      );
+    }
+
+    return sources;
   }
 }

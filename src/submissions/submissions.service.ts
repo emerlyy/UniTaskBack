@@ -22,8 +22,18 @@ export class SubmissionsService {
     return submission;
   }
 
-  async updateAutoScore(id: string, autoScore: number): Promise<Submission> {
-    await this.submissionsRepository.update(id, { autoScore });
+  async updateAutoScore(
+    id: string,
+    autoScore: number,
+    answerText?: string,
+  ): Promise<Submission> {
+    const updatePayload: Partial<Submission> = { autoScore };
+
+    if (answerText !== undefined) {
+      updatePayload.answerText = answerText;
+    }
+
+    await this.submissionsRepository.update(id, updatePayload);
     return this.findById(id);
   }
 }

@@ -1,10 +1,16 @@
 import {
+  BadRequestException,
   Injectable,
   Logger,
   OnModuleInit,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { join, isAbsolute } from 'node:path';
 import { SubmissionsService } from '../submissions/submissions.service';
+import {
+  UnsupportedMimeTypeError,
+  extractText,
+} from '../utils/text-extraction.util';
 
 type TransformersModule = typeof import('@xenova/transformers');
 
@@ -34,6 +40,11 @@ interface PipelineOutputWithMask {
   attention_mask?: unknown;
   last_hidden_state?: unknown;
 }
+
+type TextSource = {
+  text?: string;
+  filePath?: string;
+};
 
 const DEFAULT_MODEL_ID =
   process.env.EVAL_MODEL_ID ?? 'Xenova/paraphrase-MiniLM-L6-v2';
@@ -71,36 +82,68 @@ export class EvaluationService implements OnModuleInit {
     return { embedding: normalized };
   }
 
-  async similarity(reference: string, answer: string): Promise<number> {
-    const [refEmbedding, ansEmbedding] = await Promise.all([
-      this.getReferenceEmbedding(reference),
-      this.embed(answer).then((result) => result.embedding),
+  async score(
+    reference: TextSource,
+    answer: TextSource,
+  ): Promise<number> {
+    const [referenceText, answerText] = await Promise.all([
+      this.resolveTextSource(reference, 'reference'),
+      this.resolveTextSource(answer, 'answer'),
     ]);
 
-    return this.cosine(refEmbedding, ansEmbedding);
+    return this.scoreTexts(referenceText, answerText);
   }
 
-  async score(reference: string, answer: string): Promise<number> {
-    const similarity = await this.similarity(reference, answer);
-    return this.toScore(similarity);
-  }
+  async scoreBatch(
+    reference: TextSource,
+    answers: TextSource[],
+  ): Promise<number[]> {
+    const referenceText = await this.resolveTextSource(reference, 'reference');
+    const refEmbedding = await this.getReferenceEmbedding(referenceText);
 
-  async scoreBatch(reference: string, answers: string[]): Promise<number[]> {
-    const refEmbedding = await this.getReferenceEmbedding(reference);
-    const embeddingPromises = answers.map((answer) => this.embed(answer));
-    const computedEmbeddings = await Promise.all(embeddingPromises);
-    return computedEmbeddings.map(({ embedding }) =>
-      this.toScore(this.cosine(refEmbedding, embedding)),
-    );
+    const scores: number[] = [];
+    for (const source of answers) {
+      const answerText = await this.resolveTextSource(source, 'answer');
+      const { embedding } = await this.embed(answerText);
+      scores.push(this.toScore(this.cosine(refEmbedding, embedding)));
+    }
+
+    return scores;
   }
 
   async scoreSubmission(
     submissionId: string,
-    reference: string,
-    answer: string,
+    referenceSource: TextSource,
+    overrideAnswerSource?: TextSource,
   ): Promise<number> {
-    const score = await this.score(reference, answer);
-    await this.submissionsService.updateAutoScore(submissionId, score);
+    const submission = await this.submissionsService.findById(submissionId);
+
+    const referenceText = await this.resolveTextSource(
+      referenceSource,
+      'reference',
+    );
+
+    const effectiveAnswerSource: TextSource =
+      overrideAnswerSource && (overrideAnswerSource.text ||
+      overrideAnswerSource.filePath)
+        ? overrideAnswerSource
+        : {
+            text: submission.answerText ?? undefined,
+            filePath: submission.answerFilePath ?? undefined,
+          };
+
+    const answerText = await this.resolveTextSource(
+      effectiveAnswerSource,
+      'answer',
+    );
+
+    const score = await this.scoreTexts(referenceText, answerText);
+    await this.submissionsService.updateAutoScore(
+      submissionId,
+      score,
+      answerText,
+    );
+
     return score;
   }
 
@@ -149,6 +192,7 @@ export class EvaluationService implements OnModuleInit {
           'Empty output from feature extractor',
         );
       }
+
       return {
         lastHiddenState: this.ensureTensor(firstElement),
         attentionMask: this.extractOptionalTensor(
@@ -199,16 +243,17 @@ export class EvaluationService implements OnModuleInit {
       return false;
     }
 
-    const maybeTensor = value as { data?: unknown; dims?: unknown };
-    if (!maybeTensor.data || !maybeTensor.dims) {
+    const candidate = value as { data?: unknown; dims?: unknown };
+
+    if (!candidate.data || !candidate.dims) {
       return false;
     }
 
-    if (!Array.isArray(maybeTensor.dims)) {
+    if (!Array.isArray(candidate.dims)) {
       return false;
     }
 
-    const dimsValid = maybeTensor.dims.every(
+    const dimsValid = candidate.dims.every(
       (dim): dim is number => typeof dim === 'number' && Number.isFinite(dim),
     );
 
@@ -216,11 +261,11 @@ export class EvaluationService implements OnModuleInit {
       return false;
     }
 
-    if (!ArrayBuffer.isView(maybeTensor.data)) {
+    if (!ArrayBuffer.isView(candidate.data)) {
       return false;
     }
 
-    return !(maybeTensor.data instanceof DataView);
+    return !(candidate.data instanceof DataView);
   }
 
   private meanPool(
@@ -262,7 +307,7 @@ export class EvaluationService implements OnModuleInit {
       for (let dimIndex = 0; dimIndex < dimension; dimIndex += 1) {
         const rawValue = hiddenStateData[offset + dimIndex];
         const numericValue =
-          typeof rawValue === 'bigint' ? Number(rawValue) : rawValue;
+          typeof rawValue === 'bigint' ? Number(rawValue) : (rawValue as number);
         output[dimIndex] += numericValue;
       }
     }
@@ -309,15 +354,82 @@ export class EvaluationService implements OnModuleInit {
   }
 
   private async getReferenceEmbedding(
-    reference: string,
+    referenceText: string,
   ): Promise<Float32Array> {
-    const cached = this.referenceCache.get(reference);
+    const cached = this.referenceCache.get(referenceText);
     if (cached) {
       return cached;
     }
 
-    const { embedding } = await this.embed(reference);
-    this.referenceCache.set(reference, embedding);
+    const { embedding } = await this.embed(referenceText);
+    this.referenceCache.set(referenceText, embedding);
     return embedding;
+  }
+
+  private async resolveTextSource(
+    source: TextSource,
+    label: 'reference' | 'answer',
+  ): Promise<string> {
+    const candidateText = source.text?.trim();
+    if (candidateText) {
+      return candidateText;
+    }
+
+    if (!source.filePath) {
+      throw new BadRequestException(
+        `No ${label} text or file path provided for evaluation`,
+      );
+    }
+
+    const absolutePath = this.resolveFilePath(source.filePath);
+
+    try {
+      const extracted = await extractText(absolutePath);
+      if (!extracted) {
+        throw new ServiceUnavailableException(
+          `Unable to extract ${label} text from file`,
+        );
+      }
+
+      return extracted;
+    } catch (error) {
+      if (error instanceof UnsupportedMimeTypeError) {
+        throw new BadRequestException(
+          `Unsupported ${label} file type: ${error.message}`,
+        );
+      }
+
+      this.logger.error(
+        `Failed to extract ${label} text from ${absolutePath}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+      throw new ServiceUnavailableException(
+        `Failed to extract ${label} text`,
+      );
+    }
+  }
+
+  private resolveFilePath(filePath: string): string {
+    return isAbsolute(filePath) ? filePath : join(process.cwd(), filePath);
+  }
+
+  private async scoreTexts(
+    referenceText: string,
+    answerText: string,
+  ): Promise<number> {
+    const similarity = await this.similarityTexts(referenceText, answerText);
+    return this.toScore(similarity);
+  }
+
+  private async similarityTexts(
+    referenceText: string,
+    answerText: string,
+  ): Promise<number> {
+    const [refEmbedding, ansEmbedding] = await Promise.all([
+      this.getReferenceEmbedding(referenceText),
+      this.embed(answerText).then((result) => result.embedding),
+    ]);
+
+    return this.cosine(refEmbedding, ansEmbedding);
   }
 }
