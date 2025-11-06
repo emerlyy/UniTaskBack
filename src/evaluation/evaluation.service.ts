@@ -4,6 +4,7 @@ import {
   OnModuleInit,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { SubmissionsService } from '../submissions/submissions.service';
 
 type TransformersModule = typeof import('@xenova/transformers');
 
@@ -46,6 +47,8 @@ export class EvaluationService implements OnModuleInit {
 
   private readonly referenceCache = new Map<string, Float32Array>();
 
+  constructor(private readonly submissionsService: SubmissionsService) {}
+
   async onModuleInit(): Promise<void> {
     await this.ensurePipelineReady();
     await this.embed('warmup');
@@ -84,15 +87,21 @@ export class EvaluationService implements OnModuleInit {
 
   async scoreBatch(reference: string, answers: string[]): Promise<number[]> {
     const refEmbedding = await this.getReferenceEmbedding(reference);
-    const scores: number[] = [];
+    const embeddingPromises = answers.map((answer) => this.embed(answer));
+    const computedEmbeddings = await Promise.all(embeddingPromises);
+    return computedEmbeddings.map(({ embedding }) =>
+      this.toScore(this.cosine(refEmbedding, embedding)),
+    );
+  }
 
-    for (const answer of answers) {
-      const { embedding } = await this.embed(answer);
-      const similarity = this.cosine(refEmbedding, embedding);
-      scores.push(this.toScore(similarity));
-    }
-
-    return scores;
+  async scoreSubmission(
+    submissionId: string,
+    reference: string,
+    answer: string,
+  ): Promise<number> {
+    const score = await this.score(reference, answer);
+    await this.submissionsService.updateAutoScore(submissionId, score);
+    return score;
   }
 
   private async ensurePipelineReady(): Promise<FeatureExtractionPipeline> {

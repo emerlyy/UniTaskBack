@@ -1,5 +1,5 @@
 import { Body, Controller, Post } from '@nestjs/common';
-import { IsArray, IsString, MinLength } from 'class-validator';
+import { IsArray, IsString, MinLength, IsUUID } from 'class-validator';
 import { EvaluationService } from './evaluation.service';
 
 class ScoreRequestDto {
@@ -22,6 +22,11 @@ class ScoreBatchRequestDto {
   answers!: string[];
 }
 
+class ScoreSubmissionDto extends ScoreRequestDto {
+  @IsUUID()
+  submissionId!: string;
+}
+
 @Controller('evaluation')
 export class EvaluationController {
   constructor(private readonly evaluationService: EvaluationService) {}
@@ -39,5 +44,15 @@ export class EvaluationController {
       dto.answers,
     );
     return { scores };
+  }
+
+  @Post('score-submission')
+  async scoreSubmission(@Body() dto: ScoreSubmissionDto) {
+    const score = await this.evaluationService.scoreSubmission(
+      dto.submissionId,
+      dto.reference,
+      dto.answer,
+    );
+    return { score };
   }
 }

@@ -4,11 +4,13 @@ import {
   Entity,
   JoinColumn,
   ManyToOne,
+  OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
 import { Course } from '../../courses/entities/course.entity';
 import { User } from '../../users/entities/user.entity';
+import type { Submission } from '../../submissions/entities/submission.entity';
 
 @Entity({ name: 'tasks' })
 export class Task {
@@ -44,6 +46,9 @@ export class Task {
   })
   @JoinColumn({ name: 'creator_id' })
   creator!: User;
+
+  @OneToMany('Submission', 'task')
+  submissions?: Submission[];
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;

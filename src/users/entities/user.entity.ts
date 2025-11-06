@@ -9,6 +9,7 @@ import {
 } from 'typeorm';
 import type { Course } from '../../courses/entities/course.entity';
 import type { Task } from '../../tasks/entities/task.entity';
+import type { Submission } from '../../submissions/entities/submission.entity';
 
 export enum UserRole {
   Teacher = 'teacher',
@@ -48,4 +49,7 @@ export class User {
 
   @OneToMany('Task', 'creator')
   tasks?: Task[];
+
+  @OneToMany('Submission', 'student')
+  submissions?: Submission[];
 }
