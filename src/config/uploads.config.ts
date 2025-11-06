@@ -1,8 +1,13 @@
 import { existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 
-export const UPLOADS_RELATIVE_PATH = 'uploads';
-export const UPLOADS_DIR = join(process.cwd(), UPLOADS_RELATIVE_PATH);
+const configuredDir = process.env.FILES_DIR ?? 'uploads';
+
+export const UPLOADS_RELATIVE_PATH = configuredDir.replace(/^[\\/]+/, '');
+export const UPLOADS_DIR = isAbsolute(configuredDir)
+  ? configuredDir
+  : join(process.cwd(), UPLOADS_RELATIVE_PATH);
+export const UPLOADS_URL_PREFIX = '/uploads';
 
 export const ensureUploadsDir = (): void => {
   if (!existsSync(UPLOADS_DIR)) {
@@ -11,4 +16,4 @@ export const ensureUploadsDir = (): void => {
 };
 
 export const buildStoredFilePath = (filename: string): string =>
-  `${UPLOADS_RELATIVE_PATH}/${filename}`;
+  `${UPLOADS_URL_PREFIX}/${filename}`;

@@ -105,7 +105,7 @@ export class EvaluationController {
     text: string | undefined,
     filePath: string | undefined,
     label: 'reference' | 'answer',
-  ) {
+  ): TextSource {
     const trimmedText = text?.trim();
     const trimmedPath = filePath?.trim();
 
@@ -124,7 +124,7 @@ export class EvaluationController {
   private buildOptionalSource(
     text: string | undefined,
     filePath: string | undefined,
-  ) {
+  ): TextSource | undefined {
     const trimmedText = text?.trim();
     const trimmedPath = filePath?.trim();
 
