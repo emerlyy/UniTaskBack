@@ -63,6 +63,8 @@ export class UsersService {
       hashedRefreshToken: _hashedRefreshToken,
       ...safe
     } = user;
+    void _password;
+    void _hashedRefreshToken;
     return safe;
   }
 }

@@ -3,9 +3,12 @@ import {
   CreateDateColumn,
   Entity,
   Index,
+  OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import type { Course } from '../../courses/entities/course.entity';
+import type { Task } from '../../tasks/entities/task.entity';
 
 export enum UserRole {
   Teacher = 'teacher',
@@ -39,4 +42,10 @@ export class User {
 
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt!: Date;
+
+  @OneToMany('Course', 'teacher')
+  courses?: Course[];
+
+  @OneToMany('Task', 'creator')
+  tasks?: Task[];
 }
