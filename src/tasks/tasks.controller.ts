@@ -19,12 +19,17 @@ import type { CreateTaskDto } from './dto/create-task.dto';
 import { CurrentUserId } from '../auth/decorators/current-user-id.decorator';
 import { buildStoredFilePath } from '../config/uploads.config';
 
-const isMulterFile = (value: unknown): value is Express.Multer.File =>
-  Boolean(
-    value &&
-      typeof value === 'object' &&
-      typeof (value as Express.Multer.File).filename === 'string',
+const isMulterFile = (value: unknown): value is Express.Multer.File => {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const candidate = value as Partial<Express.Multer.File>;
+  return (
+    typeof candidate.filename === 'string' &&
+    typeof candidate.mimetype === 'string'
   );
+};
 
 @UseGuards(JwtAuthGuard)
 @Controller('courses/:courseId/tasks')
