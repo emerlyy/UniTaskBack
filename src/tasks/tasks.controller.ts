@@ -1,4 +1,15 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import type { Express } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -6,6 +17,14 @@ import { UserRole } from '../users/entities/user.entity';
 import { TasksService } from './tasks.service';
 import type { CreateTaskDto } from './dto/create-task.dto';
 import { CurrentUserId } from '../auth/decorators/current-user-id.decorator';
+import { buildStoredFilePath } from '../config/uploads.config';
+
+const isMulterFile = (value: unknown): value is Express.Multer.File =>
+  Boolean(
+    value &&
+      typeof value === 'object' &&
+      typeof (value as Express.Multer.File).filename === 'string',
+  );
 
 @UseGuards(JwtAuthGuard)
 @Controller('courses/:courseId/tasks')
@@ -15,12 +34,22 @@ export class TasksController {
   @Post()
   @UseGuards(RolesGuard)
   @Roles(UserRole.Teacher)
+  @UseInterceptors(FileInterceptor('file'))
   createTask(
     @Param('courseId') courseId: string,
     @CurrentUserId() teacherId: string,
     @Body() createTaskDto: CreateTaskDto,
+    @UploadedFile() file?: Express.Multer.File,
   ) {
-    return this.tasksService.createTask(courseId, teacherId, createTaskDto);
+    const attachmentPath = isMulterFile(file)
+      ? buildStoredFilePath(file.filename)
+      : null;
+    return this.tasksService.createTask(
+      courseId,
+      teacherId,
+      createTaskDto,
+      attachmentPath,
+    );
   }
 
   @Get()

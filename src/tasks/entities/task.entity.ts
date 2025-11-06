@@ -24,6 +24,9 @@ export class Task {
   @Column({ name: 'due_date', type: 'timestamptz', nullable: true })
   dueDate?: Date | null;
 
+  @Column({ name: 'attachment_path', nullable: true })
+  attachmentPath?: string | null;
+
   @Column({ name: 'course_id' })
   courseId!: string;
 

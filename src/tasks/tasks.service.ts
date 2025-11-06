@@ -23,6 +23,7 @@ export class TasksService {
     courseId: string,
     teacherId: string,
     createTaskDto: CreateTaskDto,
+    attachmentPath: string | null = null,
   ): Promise<Task> {
     const course = await this.coursesRepository.findOne({
       where: { id: courseId },
@@ -40,11 +41,15 @@ export class TasksService {
       throw new ForbiddenException('Only the course owner can create tasks');
     }
 
+    const dueDate = this.parseDueDate(createTaskDto.dueDate);
+
     const task = this.tasksRepository.create({
-      ...createTaskDto,
-      dueDate: this.parseDueDate(createTaskDto.dueDate),
+      title: createTaskDto.title,
+      description: createTaskDto.description,
+      dueDate,
       courseId,
       creatorId: teacherId,
+      attachmentPath,
     });
 
     return this.tasksRepository.save(task);
@@ -65,9 +70,7 @@ export class TasksService {
     });
   }
 
-  private parseDueDate(
-    dueDate: CreateTaskDto['dueDate'],
-  ): Date | null | undefined {
+  private parseDueDate(dueDate: CreateTaskDto['dueDate']): Date | null {
     if (!dueDate) {
       return null;
     }
