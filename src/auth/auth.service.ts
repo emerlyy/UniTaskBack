@@ -63,12 +63,11 @@ export class AuthService {
     return this.issueTokens(user);
   }
 
-  async logout(_userId: string): Promise<void> {}
+  logout(userId: string): void {
+    void userId;
+  }
 
-  async refreshTokens(
-    userId: string,
-    _refreshToken: string,
-  ): Promise<AuthResponse> {
+  async refreshTokens(userId: string): Promise<AuthResponse> {
     const user = await this.usersService.findById(userId);
 
     if (!user) {
@@ -85,7 +84,14 @@ export class AuthService {
       role: user.role,
     };
 
-    const secret = this.configService.get<string>('jwt.secret') ?? 'secret';
+    const accessSecret =
+      this.configService.get<string>('jwt.accessSecret') ||
+      this.configService.get<string>('jwt.secret') ||
+      'secret';
+    const refreshSecret =
+      this.configService.get<string>('jwt.refreshSecret') ||
+      this.configService.get<string>('jwt.secret') ||
+      'secret';
     const accessExpiresIn =
       this.configService.get<JwtSignOptions['expiresIn']>(
         'jwt.accessExpiresIn',
@@ -97,11 +103,11 @@ export class AuthService {
 
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(payload, {
-        secret,
+        secret: accessSecret,
         expiresIn: accessExpiresIn,
       }),
       this.jwtService.signAsync(payload, {
-        secret,
+        secret: refreshSecret,
         expiresIn: refreshExpiresIn,
       }),
     ]);
