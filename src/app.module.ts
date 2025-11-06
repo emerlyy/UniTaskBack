@@ -11,6 +11,7 @@ import { CoursesModule } from './courses/courses.module';
 import { TasksModule } from './tasks/tasks.module';
 import { SubmissionsModule } from './submissions/submissions.module';
 import { EvaluationModule } from './evaluation/evaluation.module';
+import { FilesModule } from './files/files.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { EvaluationModule } from './evaluation/evaluation.module';
     TasksModule,
     SubmissionsModule,
     EvaluationModule,
+    FilesModule,
   ],
   controllers: [AppController],
   providers: [AppService],
