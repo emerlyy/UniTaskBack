@@ -1,10 +1,7 @@
 import { SafeUser } from '../../users/users.service';
 
-export interface AuthTokens {
-  accessToken: string;
-  refreshToken: string;
-}
-
-export interface AuthResponse extends AuthTokens {
+export interface AuthResponse {
+  access_token: string;
+  refresh_token: string;
   user: SafeUser;
 }

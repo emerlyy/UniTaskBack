@@ -17,8 +17,7 @@ import { JwtRefreshStrategy } from './strategies/jwt-refresh.strategy';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
-        secret:
-          configService.get<string>('JWT_ACCESS_SECRET') ?? 'access-secret',
+        secret: configService.get<string>('jwt.secret') ?? 'secret',
       }),
     }),
     UsersModule,

@@ -1,175 +1,49 @@
-import { BadRequestException, Body, Controller, Post } from '@nestjs/common';
-import {
-  IsArray,
-  IsOptional,
-  IsString,
-  IsUUID,
-  MinLength,
-} from 'class-validator';
+import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { IsInt, IsUUID, Max, Min } from 'class-validator';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { UserRole } from '../users/entities/user.entity';
 import { EvaluationService } from './evaluation.service';
-import type { TextSource } from './types';
 
-class ScoreRequestDto {
-  @IsString()
-  @IsOptional()
-  @MinLength(1)
-  reference?: string;
-
-  @IsString()
-  @IsOptional()
-  @MinLength(1)
-  referenceFilePath?: string;
-
-  @IsString()
-  @IsOptional()
-  @MinLength(1)
-  answer?: string;
-
-  @IsString()
-  @IsOptional()
-  @MinLength(1)
-  answerFilePath?: string;
-}
-
-class ScoreBatchRequestDto {
-  @IsString()
-  @IsOptional()
-  @MinLength(1)
-  reference?: string;
-
-  @IsString()
-  @IsOptional()
-  @MinLength(1)
-  referenceFilePath?: string;
-
-  @IsArray()
-  @IsOptional()
-  @IsString({ each: true })
-  answers?: string[];
-
-  @IsArray()
-  @IsOptional()
-  @IsString({ each: true })
-  answerFilePaths?: string[];
-}
-
-class ScoreSubmissionDto extends ScoreRequestDto {
+class AutoEvaluateDto {
   @IsUUID()
-  submissionId!: string;
+  submission_id!: string;
 }
 
+class ManualEvaluateDto {
+  @IsUUID()
+  submission_id!: string;
+
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  final_score!: number;
+}
+
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('evaluation')
 export class EvaluationController {
   constructor(private readonly evaluationService: EvaluationService) {}
 
-  @Post('score')
-  async score(@Body() dto: ScoreRequestDto) {
-    const score = await this.evaluationService.score(
-      this.buildSource(dto.reference, dto.referenceFilePath, 'reference'),
-      this.buildSource(dto.answer, dto.answerFilePath, 'answer'),
-    );
-    return { score };
+  @Post('auto')
+  @Roles(UserRole.Teacher)
+  async autoEvaluate(@Body() dto: AutoEvaluateDto) {
+    const score = await this.evaluationService.autoEvaluate(dto.submission_id);
+    return { submission_id: dto.submission_id, auto_score: score };
   }
 
-  @Post('score-batch')
-  async scoreBatch(@Body() dto: ScoreBatchRequestDto) {
-    const referenceSource = this.buildSource(
-      dto.reference,
-      dto.referenceFilePath,
-      'reference',
+  @Post('manual')
+  @Roles(UserRole.Teacher)
+  async manualEvaluate(@Body() dto: ManualEvaluateDto) {
+    const submission = await this.evaluationService.setFinalScore(
+      dto.submission_id,
+      dto.final_score,
     );
-
-    const answerSources = this.buildBatchSources(
-      dto.answers,
-      dto.answerFilePaths,
-    );
-
-    const scores = await this.evaluationService.scoreBatch(
-      referenceSource,
-      answerSources,
-    );
-    return { scores };
-  }
-
-  @Post('score-submission')
-  async scoreSubmission(@Body() dto: ScoreSubmissionDto) {
-    const score = await this.evaluationService.scoreSubmission(
-      dto.submissionId,
-      this.buildSource(dto.reference, dto.referenceFilePath, 'reference'),
-      this.buildOptionalSource(dto.answer, dto.answerFilePath),
-    );
-    return { score };
-  }
-
-  private buildSource(
-    text: string | undefined,
-    filePath: string | undefined,
-    label: 'reference' | 'answer',
-  ): TextSource {
-    const trimmedText = text?.trim();
-    const trimmedPath = filePath?.trim();
-
-    if (!trimmedText && !trimmedPath) {
-      throw new BadRequestException(
-        `Provide either ${label} text or ${label}FilePath`,
-      );
-    }
-
     return {
-      text: trimmedText,
-      filePath: trimmedPath,
+      submission_id: submission.id,
+      final_score: submission.finalScore,
+      status: submission.status,
     };
-  }
-
-  private buildOptionalSource(
-    text: string | undefined,
-    filePath: string | undefined,
-  ): TextSource | undefined {
-    const trimmedText = text?.trim();
-    const trimmedPath = filePath?.trim();
-
-    if (!trimmedText && !trimmedPath) {
-      return undefined;
-    }
-
-    return {
-      text: trimmedText,
-      filePath: trimmedPath,
-    };
-  }
-
-  private buildBatchSources(
-    answers: string[] | undefined,
-    answerFilePaths: string[] | undefined,
-  ): TextSource[] {
-    const textList = answers ?? [];
-    const filePathList = answerFilePaths ?? [];
-
-    if (!textList.length && !filePathList.length) {
-      throw new BadRequestException(
-        'Provide answers or answerFilePaths for batch scoring',
-      );
-    }
-
-    if (
-      textList.length &&
-      filePathList.length &&
-      textList.length !== filePathList.length
-    ) {
-      throw new BadRequestException(
-        'answers and answerFilePaths must be the same length when both are provided',
-      );
-    }
-
-    const maxLength = Math.max(textList.length, filePathList.length);
-    const sources: TextSource[] = [];
-
-    for (let index = 0; index < maxLength; index += 1) {
-      sources.push(
-        this.buildSource(textList[index], filePathList[index], 'answer'),
-      );
-    }
-
-    return sources;
   }
 }

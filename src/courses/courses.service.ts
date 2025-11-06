@@ -11,12 +11,10 @@ export class CoursesService {
     private readonly coursesRepository: Repository<Course>,
   ) {}
 
-  async createCourse(
-    teacherId: string,
-    createCourseDto: CreateCourseDto,
-  ): Promise<Course> {
+  async createCourse(teacherId: string, dto: CreateCourseDto): Promise<Course> {
     const course = this.coursesRepository.create({
-      ...createCourseDto,
+      name: dto.name,
+      description: dto.description ?? null,
       teacherId,
     });
 
@@ -24,16 +22,26 @@ export class CoursesService {
   }
 
   async findAll(): Promise<Course[]> {
-    return this.coursesRepository.find();
+    return this.coursesRepository.find({
+      relations: ['teacher'],
+    });
   }
 
-  async findById(courseId: string): Promise<Course> {
+  async findByTeacher(teacherId: string): Promise<Course[]> {
+    return this.coursesRepository.find({
+      where: { teacherId },
+      relations: ['teacher'],
+    });
+  }
+
+  async findById(id: string): Promise<Course> {
     const course = await this.coursesRepository.findOne({
-      where: { id: courseId },
+      where: { id },
+      relations: ['teacher'],
     });
 
     if (!course) {
-      throw new NotFoundException(`Course ${courseId} not found`);
+      throw new NotFoundException(`Course ${id} not found`);
     }
 
     return course;

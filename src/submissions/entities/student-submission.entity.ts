@@ -39,7 +39,10 @@ export class StudentSubmission {
   @Column({ name: 'final_score', type: 'int', nullable: true })
   finalScore?: number | null;
 
-  @Column({ type: 'text' })
+  @Column({
+    type: 'text',
+    default: SubmissionStatus.Pending,
+  })
   status!: SubmissionStatus;
 
   @ManyToOne(() => Task, (task) => task.submissions, {

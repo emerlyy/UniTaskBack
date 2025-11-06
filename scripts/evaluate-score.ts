@@ -9,9 +9,8 @@ class StubSubmissionsService {
   async updateAutoScore(
     submissionId: string,
     autoScore: number,
-    answerText?: string,
   ) {
-    return Promise.resolve({ submissionId, autoScore, answerText });
+    return Promise.resolve({ submissionId, autoScore });
   }
 }
 

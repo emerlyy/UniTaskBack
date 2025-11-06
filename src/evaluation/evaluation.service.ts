@@ -21,6 +21,14 @@ type FeatureExtractionPipeline = (
   options?: Record<string, unknown>,
 ) => Promise<unknown>;
 
+type TextClassificationPipeline = (
+  inputs:
+    | string
+    | { text: string; text_pair?: string }[]
+    | { text: string; text_pair?: string },
+  options?: Record<string, unknown>,
+) => Promise<unknown>;
+
 type SupportedTypedArray =
   | Float32Array
   | Float64Array
@@ -43,8 +51,15 @@ interface PipelineOutputWithMask {
   last_hidden_state?: unknown;
 }
 
+interface NliPrediction {
+  label: string;
+  score: number;
+}
+
 const DEFAULT_MODEL_ID =
   process.env.EVAL_MODEL_ID ?? 'Xenova/paraphrase-MiniLM-L6-v2';
+const DEFAULT_NLI_MODEL_ID =
+  process.env.EVAL_NLI_MODEL_ID ?? 'Xenova/nli-deberta-v3-small';
 
 @Injectable()
 export class EvaluationService implements OnModuleInit {
@@ -52,6 +67,7 @@ export class EvaluationService implements OnModuleInit {
 
   private transformersModule?: TransformersModule;
   private featureExtractor?: FeatureExtractionPipeline;
+  private nliClassifier?: TextClassificationPipeline;
 
   private readonly referenceCache = new Map<string, Float32Array>();
 
@@ -79,54 +95,47 @@ export class EvaluationService implements OnModuleInit {
     return { embedding: normalized };
   }
 
-  async score(reference: TextSource, answer: TextSource): Promise<number> {
-    const [referenceText, answerText] = await Promise.all([
-      this.resolveTextSource(reference, 'reference'),
-      this.resolveTextSource(answer, 'answer'),
-    ]);
+  async autoEvaluate(submissionId: string): Promise<number> {
+    const submission = await this.submissionsService.findById(submissionId);
 
-    return this.scoreTexts(referenceText, answerText);
-  }
-
-  async scoreBatch(
-    reference: TextSource,
-    answers: TextSource[],
-  ): Promise<number[]> {
-    const referenceText = await this.resolveTextSource(reference, 'reference');
-    const refEmbedding = await this.getReferenceEmbedding(referenceText);
-
-    const scores: number[] = [];
-    for (const source of answers) {
-      const answerText = await this.resolveTextSource(source, 'answer');
-      const { embedding } = await this.embed(answerText);
-      scores.push(this.toScore(this.cosine(refEmbedding, embedding)));
+    if (!submission.task?.referenceFileUrl) {
+      throw new BadRequestException('Task does not have a reference file');
     }
 
-    return scores;
-  }
-
-  async scoreSubmission(
-    submissionId: string,
-    referenceSource: TextSource,
-    overrideAnswerSource?: TextSource,
-  ): Promise<number> {
-    const submission = await this.submissionsService.findById(submissionId);
+    const referenceSource: TextSource = {
+      filePath: submission.task.referenceFileUrl,
+    };
 
     const referenceText = await this.resolveTextSource(
       referenceSource,
       'reference',
     );
 
-    const answerText =
-      overrideAnswerSource &&
-      (overrideAnswerSource.text || overrideAnswerSource.filePath)
-        ? await this.resolveTextSource(overrideAnswerSource, 'answer')
-        : await this.extractSubmissionFilesText(submission);
-
+    const answerText = await this.extractSubmissionFilesText(submission);
     const score = await this.scoreTexts(referenceText, answerText);
-    await this.submissionsService.updateAutoScore(submissionId, score);
 
+    await this.submissionsService.updateAutoScore(submissionId, score);
     return score;
+  }
+
+  async score(reference: TextSource, answer: TextSource): Promise<number> {
+    const referenceText = await this.resolveTextSource(reference, 'reference');
+    const answerText = await this.resolveTextSource(answer, 'answer');
+    return this.scoreTexts(referenceText, answerText);
+  }
+
+  async setFinalScore(
+    submissionId: string,
+    finalScore: number,
+  ): Promise<StudentSubmission> {
+    return this.submissionsService.updateFinalScore(submissionId, finalScore);
+  }
+
+  private async ensureTransformersModule(): Promise<TransformersModule> {
+    if (!this.transformersModule) {
+      this.transformersModule = await import('@xenova/transformers');
+    }
+    return this.transformersModule;
   }
 
   private async ensurePipelineReady(): Promise<FeatureExtractionPipeline> {
@@ -134,11 +143,9 @@ export class EvaluationService implements OnModuleInit {
       return this.featureExtractor;
     }
 
-    if (!this.transformersModule) {
-      this.transformersModule = await import('@xenova/transformers');
-    }
+    const transformers = await this.ensureTransformersModule();
 
-    const pipeline = await this.transformersModule.pipeline(
+    const pipeline = await transformers.pipeline(
       'feature-extraction',
       DEFAULT_MODEL_ID,
       { quantized: true },
@@ -152,6 +159,28 @@ export class EvaluationService implements OnModuleInit {
 
     this.featureExtractor = pipeline as FeatureExtractionPipeline;
     return this.featureExtractor;
+  }
+
+  private async ensureNliClassifier(): Promise<TextClassificationPipeline> {
+    if (this.nliClassifier) {
+      return this.nliClassifier;
+    }
+
+    const transformers = await this.ensureTransformersModule();
+    const pipeline = await transformers.pipeline(
+      'text-classification',
+      DEFAULT_NLI_MODEL_ID,
+      { quantized: true },
+    );
+
+    if (typeof pipeline !== 'function') {
+      throw new ServiceUnavailableException(
+        'Unable to initialise NLI classification pipeline',
+      );
+    }
+
+    this.nliClassifier = pipeline as TextClassificationPipeline;
+    return this.nliClassifier;
   }
 
   private parseFeatureExtractionOutput(raw: unknown): {
@@ -420,7 +449,18 @@ export class EvaluationService implements OnModuleInit {
     answerText: string,
   ): Promise<number> {
     const similarity = await this.similarityTexts(referenceText, answerText);
-    return this.toScore(similarity);
+    const baseScore = this.toScore(similarity);
+
+    if (baseScore === 0) {
+      return 0;
+    }
+
+    const contradictionProbability = await this.contradictionProbability(
+      referenceText,
+      answerText,
+    );
+
+    return this.applyContradictionPenalty(baseScore, contradictionProbability);
   }
 
   private async similarityTexts(
@@ -433,5 +473,86 @@ export class EvaluationService implements OnModuleInit {
     ]);
 
     return this.cosine(refEmbedding, ansEmbedding);
+  }
+
+  private async contradictionProbability(
+    referenceText: string,
+    answerText: string,
+  ): Promise<number> {
+    try {
+      const classifier = await this.ensureNliClassifier();
+      const raw = await classifier([
+        { text: referenceText, text_pair: answerText },
+      ]);
+
+      const predictions = this.parseNliOutput(raw);
+      const contradiction = predictions.find((prediction) =>
+        prediction.label.toLowerCase().includes('contradiction'),
+      );
+
+      return contradiction?.score ?? 0;
+    } catch (error) {
+      this.logger.warn(
+        'Failed to evaluate contradiction probability',
+        error instanceof Error ? error.message : undefined,
+      );
+      return 0;
+    }
+  }
+
+  private parseNliOutput(raw: unknown): NliPrediction[] {
+    if (this.isNliPrediction(raw)) {
+      return [raw];
+    }
+
+    if (Array.isArray(raw)) {
+      const collected: NliPrediction[] = [];
+      for (const entry of raw) {
+        if (this.isNliPrediction(entry)) {
+          collected.push(entry);
+          continue;
+        }
+
+        if (Array.isArray(entry)) {
+          for (const nested of entry) {
+            if (this.isNliPrediction(nested)) {
+              collected.push(nested);
+            }
+          }
+        }
+      }
+      return collected;
+    }
+
+    return [];
+  }
+
+  private isNliPrediction(value: unknown): value is NliPrediction {
+    if (typeof value !== 'object' || value === null) {
+      return false;
+    }
+
+    const candidate = value as { label?: unknown; score?: unknown };
+    return (
+      typeof candidate.label === 'string' && typeof candidate.score === 'number'
+    );
+  }
+
+  private applyContradictionPenalty(
+    baseScore: number,
+    contradictionProbability: number,
+  ): number {
+    const threshold = 0.4;
+    if (contradictionProbability <= threshold) {
+      return baseScore;
+    }
+
+    const severity = Math.min(
+      1,
+      (contradictionProbability - threshold) / (1 - threshold),
+    );
+    const penaltyFactor = Math.max(0, 1 - severity);
+    const adjusted = Math.round(baseScore * penaltyFactor);
+    return Math.max(0, adjusted);
   }
 }

@@ -1,37 +1,30 @@
 import {
   IsEnum,
-  IsInt,
   IsOptional,
   IsString,
-  IsUUID,
-  Min,
   MinLength,
+  IsInt,
+  Min,
 } from 'class-validator';
 import { TaskStatus } from '../entities/task.entity';
 
-export class CreateTaskDto {
-  @IsUUID()
-  courseId!: string;
-
+export class UpdateTaskDto {
   @IsString()
+  @IsOptional()
   @MinLength(2)
-  title!: string;
+  title?: string;
 
   @IsString()
   @IsOptional()
   description?: string;
 
-  @IsString()
-  deadline!: string;
+  @IsOptional()
+  deadline?: Date | string;
 
   @IsInt()
   @Min(0)
   @IsOptional()
   latePenaltyPercent?: number;
-
-  @IsString()
-  @MinLength(1)
-  referenceFileUrl!: string;
 
   @IsEnum(TaskStatus)
   @IsOptional()

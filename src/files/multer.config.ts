@@ -7,7 +7,7 @@ import type { Request } from 'express';
 import {
   UPLOADS_DIR,
   ensureUploadsDir,
-  UPLOADS_RELATIVE_PATH,
+  UPLOADS_URL_PREFIX,
 } from '../config/uploads.config';
 
 ensureUploadsDir();
@@ -51,4 +51,4 @@ export const fileFilter = (
 };
 
 export const toPublicUrl = (filename: string): string =>
-  `/${UPLOADS_RELATIVE_PATH}/${filename}`;
+  `${UPLOADS_URL_PREFIX}/${filename}`;

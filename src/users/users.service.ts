@@ -4,7 +4,7 @@ import { Repository } from 'typeorm';
 import { CreateUserDto } from './dto/create-user.dto';
 import { User, UserRole } from './entities/user.entity';
 
-export type SafeUser = Omit<User, 'passwordHash' | 'hashedRefreshToken'>;
+export type SafeUser = Omit<User, 'passwordHash'>;
 
 @Injectable()
 export class UsersService {
@@ -15,7 +15,9 @@ export class UsersService {
 
   async create(createUserDto: CreateUserDto): Promise<User> {
     const user = this.usersRepository.create({
-      ...createUserDto,
+      fullName: createUserDto.fullName,
+      email: createUserDto.email,
+      passwordHash: createUserDto.passwordHash,
       role: createUserDto.role ?? UserRole.Student,
     });
 
@@ -42,29 +44,13 @@ export class UsersService {
     });
   }
 
-  async storeRefreshToken(
-    userId: string,
-    hashedRefreshToken: string,
-  ): Promise<void> {
-    await this.usersRepository.update(userId, { hashedRefreshToken });
-  }
-
-  async clearRefreshToken(userId: string): Promise<void> {
-    await this.usersRepository.update(userId, { hashedRefreshToken: null });
-  }
-
   stripSensitiveFields(user: User | null): SafeUser | null {
     if (!user) {
       return null;
     }
 
-    const {
-      passwordHash: _password,
-      hashedRefreshToken: _hashedRefreshToken,
-      ...safe
-    } = user;
+    const { passwordHash: _password, ...safe } = user;
     void _password;
-    void _hashedRefreshToken;
-    return safe;
+    return safe as SafeUser;
   }
 }

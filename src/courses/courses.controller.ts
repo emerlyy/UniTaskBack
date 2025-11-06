@@ -1,11 +1,11 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
-import { CurrentUserId } from '../auth/decorators/current-user-id.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { CurrentUserId } from '../auth/decorators/current-user-id.decorator';
 import { UserRole } from '../users/entities/user.entity';
 import { CoursesService } from './courses.service';
-import type { CreateCourseDto } from './dto/create-course.dto';
+import { CreateCourseDto } from './dto/create-course.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('courses')
@@ -15,20 +15,24 @@ export class CoursesController {
   @Post()
   @UseGuards(RolesGuard)
   @Roles(UserRole.Teacher)
-  createCourse(
-    @CurrentUserId() teacherId: string,
-    @Body() createCourseDto: CreateCourseDto,
-  ) {
-    return this.coursesService.createCourse(teacherId, createCourseDto);
+  create(@CurrentUserId() teacherId: string, @Body() dto: CreateCourseDto) {
+    return this.coursesService.createCourse(teacherId, dto);
   }
 
   @Get()
-  getCourses() {
+  findAll() {
     return this.coursesService.findAll();
   }
 
-  @Get(':courseId')
-  getCourse(@Param('courseId') courseId: string) {
-    return this.coursesService.findById(courseId);
+  @Get('mine')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.Teacher)
+  findMine(@CurrentUserId() teacherId: string) {
+    return this.coursesService.findByTeacher(teacherId);
+  }
+
+  @Get(':id')
+  findOne(@Param('id') id: string) {
+    return this.coursesService.findById(id);
   }
 }

@@ -1,6 +1,12 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { Task } from '../tasks/entities/task.entity';
+import { CreateSubmissionDto } from './dto/create-submission.dto';
 import {
   StudentSubmission,
   SubmissionStatus,
@@ -14,12 +20,40 @@ export class SubmissionsService {
     private readonly submissionsRepository: Repository<StudentSubmission>,
     @InjectRepository(SubmissionFile)
     private readonly submissionFilesRepository: Repository<SubmissionFile>,
+    @InjectRepository(Task)
+    private readonly tasksRepository: Repository<Task>,
   ) {}
+
+  async createSubmission(
+    studentId: string,
+    dto: CreateSubmissionDto,
+  ): Promise<StudentSubmission> {
+    const task = await this.tasksRepository.findOne({
+      where: { id: dto.taskId },
+      relations: ['course'],
+    });
+
+    if (!task) {
+      throw new NotFoundException(`Task ${dto.taskId} not found`);
+    }
+
+    const submission = this.submissionsRepository.create({
+      taskId: task.id,
+      studentId,
+      status: SubmissionStatus.Pending,
+    });
+
+    const saved = await this.submissionsRepository.save(submission);
+
+    await this.saveFiles(saved.id, dto.fileUrls);
+
+    return this.findById(saved.id);
+  }
 
   async findById(id: string): Promise<StudentSubmission> {
     const submission = await this.submissionsRepository.findOne({
       where: { id },
-      relations: ['files', 'student', 'task'],
+      relations: ['files', 'student', 'task', 'task.course'],
     });
 
     if (!submission) {
@@ -29,22 +63,38 @@ export class SubmissionsService {
     return submission;
   }
 
-  async save(submission: StudentSubmission): Promise<StudentSubmission> {
-    return this.submissionsRepository.save(submission);
+  async findByStudent(studentId: string): Promise<StudentSubmission[]> {
+    return this.submissionsRepository.find({
+      where: { studentId },
+      relations: ['task', 'files'],
+      order: { submittedAt: 'DESC' },
+    });
   }
 
-  async saveFiles(
-    submissionId: string,
-    fileUrls: string[],
-  ): Promise<SubmissionFile[]> {
-    const entities = fileUrls.map((fileUrl) =>
-      this.submissionFilesRepository.create({
-        submissionId,
-        fileUrl,
-      }),
-    );
+  async findByTask(
+    taskId: string,
+    teacherId: string,
+  ): Promise<StudentSubmission[]> {
+    const task = await this.tasksRepository.findOne({
+      where: { id: taskId },
+      relations: ['course'],
+    });
 
-    return this.submissionFilesRepository.save(entities);
+    if (!task) {
+      throw new NotFoundException(`Task ${taskId} not found`);
+    }
+
+    if (task.course.teacherId !== teacherId) {
+      throw new ForbiddenException(
+        'Only the course owner can view submissions',
+      );
+    }
+
+    return this.submissionsRepository.find({
+      where: { taskId },
+      relations: ['student', 'files'],
+      order: { submittedAt: 'DESC' },
+    });
   }
 
   async updateAutoScore(
@@ -53,7 +103,6 @@ export class SubmissionsService {
   ): Promise<StudentSubmission> {
     await this.submissionsRepository.update(submissionId, {
       autoScore,
-      status: SubmissionStatus.Graded,
     });
     return this.findById(submissionId);
   }
@@ -67,5 +116,19 @@ export class SubmissionsService {
       status: SubmissionStatus.Graded,
     });
     return this.findById(submissionId);
+  }
+
+  private async saveFiles(
+    submissionId: string,
+    fileUrls: string[],
+  ): Promise<SubmissionFile[]> {
+    const entities = fileUrls.map((fileUrl) =>
+      this.submissionFilesRepository.create({
+        submissionId,
+        fileUrl,
+      }),
+    );
+
+    return this.submissionFilesRepository.save(entities);
   }
 }

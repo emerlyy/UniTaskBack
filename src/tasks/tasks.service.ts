@@ -7,8 +7,10 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Course } from '../courses/entities/course.entity';
-import { Task, TaskStatus } from './entities/task.entity';
 import { CreateTaskDto } from './dto/create-task.dto';
+import { UpdateReferenceDto } from './dto/update-reference.dto';
+import { UpdateTaskDto } from './dto/update-task.dto';
+import { Task, TaskStatus } from './entities/task.entity';
 
 @Injectable()
 export class TasksService {
@@ -19,7 +21,7 @@ export class TasksService {
     private readonly coursesRepository: Repository<Course>,
   ) {}
 
-  async createTask(dto: CreateTaskDto, teacherId: string): Promise<Task> {
+  async create(dto: CreateTaskDto, teacherId: string): Promise<Task> {
     const course = await this.coursesRepository.findOne({
       where: { id: dto.courseId },
     });
@@ -75,16 +77,76 @@ export class TasksService {
     });
   }
 
-  private parseDeadline(deadline: CreateTaskDto['deadline']): Date {
-    if (deadline instanceof Date) {
-      return deadline;
+  async update(
+    id: string,
+    dto: UpdateTaskDto,
+    teacherId: string,
+  ): Promise<Task> {
+    const task = await this.tasksRepository.findOne({
+      where: { id },
+      relations: ['course'],
+    });
+
+    if (!task) {
+      throw new NotFoundException(`Task ${id} not found`);
     }
 
-    const parsed = new Date(deadline);
+    if (task.course.teacherId !== teacherId) {
+      throw new ForbiddenException('Only the course owner can update tasks');
+    }
+
+    if (dto.title !== undefined) {
+      task.title = dto.title;
+    }
+    if (dto.description !== undefined) {
+      task.description = dto.description ?? null;
+    }
+    if (dto.deadline !== undefined) {
+      task.deadline = this.parseDeadline(dto.deadline);
+    }
+    if (dto.latePenaltyPercent !== undefined) {
+      task.latePenaltyPercent = dto.latePenaltyPercent;
+    }
+    if (dto.status !== undefined) {
+      task.status = dto.status;
+    }
+
+    return this.tasksRepository.save(task);
+  }
+
+  async updateReference(
+    id: string,
+    dto: UpdateReferenceDto,
+    teacherId: string,
+  ): Promise<Task> {
+    const task = await this.tasksRepository.findOne({
+      where: { id },
+      relations: ['course'],
+    });
+
+    if (!task) {
+      throw new NotFoundException(`Task ${id} not found`);
+    }
+
+    if (task.course.teacherId !== teacherId) {
+      throw new ForbiddenException(
+        'Only the course owner can update reference',
+      );
+    }
+
+    task.referenceFileUrl = dto.referenceFileUrl;
+    return this.tasksRepository.save(task);
+  }
+
+  private parseDeadline(value: string | Date): Date {
+    if (value instanceof Date) {
+      return value;
+    }
+
+    const parsed = new Date(value);
     if (Number.isNaN(parsed.getTime())) {
       throw new BadRequestException('Invalid deadline');
     }
-
     return parsed;
   }
 }

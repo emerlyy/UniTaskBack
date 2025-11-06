@@ -1,21 +1,20 @@
 import {
   ConflictException,
-  ForbiddenException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import type { JwtSignOptions } from '@nestjs/jwt';
-import bcrypt from 'bcrypt';
+import * as bcrypt from 'bcrypt';
 import { UsersService } from '../users/users.service';
-import { User } from '../users/entities/user.entity';
-import { AuthResponse, AuthTokens } from './dto/auth-response.dto';
+import type { User } from '../users/entities/user.entity';
+import { AuthResponse } from './dto/auth-response.dto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
 
-const BCRYPT_SALT_ROUNDS = 12;
+const BCRYPT_ROUNDS = 12;
 
 @Injectable()
 export class AuthService {
@@ -25,30 +24,27 @@ export class AuthService {
     private readonly configService: ConfigService,
   ) {}
 
-  async register(registerDto: RegisterDto): Promise<AuthResponse> {
-    const normalizedEmail = registerDto.email.toLowerCase();
-    const existingUser = await this.usersService.findByEmail(normalizedEmail);
-    if (existingUser) {
+  async register(dto: RegisterDto): Promise<AuthResponse> {
+    const normalizedEmail = dto.email.trim().toLowerCase();
+    const existing = await this.usersService.findByEmail(normalizedEmail);
+    if (existing) {
       throw new ConflictException('Email already registered');
     }
 
-    const hashedPassword = await bcrypt.hash(
-      registerDto.password,
-      BCRYPT_SALT_ROUNDS,
-    );
+    const passwordHash = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
 
     const user = await this.usersService.create({
-      fullName: registerDto.fullName,
+      fullName: dto.fullName,
       email: normalizedEmail,
-      passwordHash: hashedPassword,
-      role: registerDto.role,
+      passwordHash,
+      role: dto.role,
     });
 
-    return this.issueTokensForUser(user);
+    return this.issueTokens(user);
   }
 
-  async login(loginDto: LoginDto): Promise<AuthResponse> {
-    const normalizedEmail = loginDto.email.toLowerCase();
+  async login(dto: LoginDto): Promise<AuthResponse> {
+    const normalizedEmail = dto.email.trim().toLowerCase();
     const user = await this.usersService.findByEmail(normalizedEmail);
 
     if (!user) {
@@ -56,7 +52,7 @@ export class AuthService {
     }
 
     const passwordMatches = await bcrypt.compare(
-      loginDto.password,
+      dto.password,
       user.passwordHash,
     );
 
@@ -64,84 +60,58 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    return this.issueTokensForUser(user);
+    return this.issueTokens(user);
   }
 
-  async logout(userId: string): Promise<void> {
-    await this.usersService.clearRefreshToken(userId);
-  }
+  async logout(_userId: string): Promise<void> {}
 
   async refreshTokens(
     userId: string,
-    refreshToken: string,
+    _refreshToken: string,
   ): Promise<AuthResponse> {
     const user = await this.usersService.findById(userId);
-    if (!user || !user.hashedRefreshToken) {
-      throw new ForbiddenException('Access denied');
+
+    if (!user) {
+      throw new UnauthorizedException('Invalid refresh token');
     }
 
-    const refreshTokenMatches = await bcrypt.compare(
-      refreshToken,
-      user.hashedRefreshToken,
-    );
-
-    if (!refreshTokenMatches) {
-      throw new ForbiddenException('Access denied');
-    }
-
-    return this.issueTokensForUser(user);
+    return this.issueTokens(user);
   }
 
-  private async issueTokensForUser(user: User): Promise<AuthResponse> {
-    const safeUser = this.usersService.stripSensitiveFields(user);
-    if (!safeUser) {
-      throw new ForbiddenException('User not found');
-    }
-
-    const tokens = await this.generateTokens(user);
-    const hashedRefreshToken = await bcrypt.hash(
-      tokens.refreshToken,
-      BCRYPT_SALT_ROUNDS,
-    );
-    await this.usersService.storeRefreshToken(user.id, hashedRefreshToken);
-
-    return {
-      user: safeUser,
-      ...tokens,
-    };
-  }
-
-  private async generateTokens(user: User): Promise<AuthTokens> {
+  private async issueTokens(user: User): Promise<AuthResponse> {
     const payload: JwtPayload = {
       sub: user.id,
       email: user.email,
       role: user.role,
     };
 
-    const accessSecret =
-      this.configService.get<string>('JWT_ACCESS_SECRET') ?? 'access-secret';
-    const refreshSecret =
-      this.configService.get<string>('JWT_REFRESH_SECRET') ?? 'refresh-secret';
-    const accessExpiresIn = (this.configService.get<string>('JWT_ACCESS_EXP') ??
-      '15m') as JwtSignOptions['expiresIn'];
-    const refreshExpiresIn = (this.configService.get<string>(
-      'JWT_REFRESH_EXP',
-    ) ?? '7d') as JwtSignOptions['expiresIn'];
+    const secret = this.configService.get<string>('jwt.secret') ?? 'secret';
+    const accessExpiresIn =
+      this.configService.get<JwtSignOptions['expiresIn']>(
+        'jwt.accessExpiresIn',
+      ) ?? '15m';
+    const refreshExpiresIn =
+      this.configService.get<JwtSignOptions['expiresIn']>(
+        'jwt.refreshExpiresIn',
+      ) ?? '7d';
 
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(payload, {
-        secret: accessSecret,
+        secret,
         expiresIn: accessExpiresIn,
       }),
       this.jwtService.signAsync(payload, {
-        secret: refreshSecret,
+        secret,
         expiresIn: refreshExpiresIn,
       }),
     ]);
 
+    const safeUser = this.usersService.stripSensitiveFields(user);
+
     return {
-      accessToken,
-      refreshToken,
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      user: safeUser!,
     };
   }
 }

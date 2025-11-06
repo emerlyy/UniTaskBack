@@ -24,9 +24,6 @@ export class User {
   @Column({ type: 'text' })
   role!: UserRole;
 
-  @Column({ name: 'hashed_refresh_token', type: 'text', nullable: true })
-  hashedRefreshToken?: string | null;
-
   @OneToMany('Course', 'teacher')
   courses?: Course[];
 
