@@ -32,7 +32,11 @@ describe('CoursesService', () => {
 
   it('createCourse persists a course with teacherId', async () => {
     const dto = { name: 'Math' };
-    const created = { id: 'course-id', ...dto, teacherId: 'teacher-id' } as Course;
+    const created = {
+      id: 'course-id',
+      ...dto,
+      teacherId: 'teacher-id',
+    } as Course;
 
     (coursesRepository.create as jest.Mock).mockReturnValue(created);
     (coursesRepository.save as jest.Mock).mockResolvedValue(created);

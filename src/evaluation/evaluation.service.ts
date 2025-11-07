@@ -8,12 +8,18 @@ import {
 import { join, isAbsolute } from 'node:path';
 import { SubmissionsService } from '../submissions/submissions.service';
 import type { StudentSubmission } from '../submissions/entities/student-submission.entity';
-import { UnsupportedMimeTypeError, extractText } from '../utils/text-extraction.util';
+import {
+  UnsupportedMimeTypeError,
+  extractText,
+} from '../utils/text-extraction.util';
 import type { TextSource } from './types';
 
 // ---- Типи для transformers ----
 type TransformersModule = typeof import('@xenova/transformers');
-type FeatureExtractionPipeline = (text: string, options?: Record<string, unknown>) => Promise<unknown>;
+type FeatureExtractionPipeline = (
+  text: string,
+  options?: Record<string, unknown>,
+) => Promise<unknown>;
 
 // ---- Мінімальний формат тензора ----
 interface TensorLike {
@@ -52,10 +58,25 @@ export class EvaluationService implements OnModuleInit {
       throw new BadRequestException('Task does not have a reference file');
     }
 
-    const referenceText = await this.resolveTextSource({ filePath: submission.task.referenceFileUrl }, 'reference');
+    const referenceText = await this.resolveTextSource(
+      { filePath: submission.task.referenceFileUrl },
+      'reference',
+    );
     const answerText = await this.extractSubmissionFilesText(submission);
 
-    const score = await this.scoreTexts(referenceText, answerText);
+    let score = await this.scoreTexts(referenceText, answerText);
+
+    const due = submission.task?.dueDate;
+    const submitted = submission.submittedAt;
+    const penaltyPercent = submission.task?.latePenaltyPercent ?? 0;
+
+    if (penaltyPercent > 0) {
+      if (submitted.getTime() > due.getTime()) {
+        const factor = Math.max(0, 1 - penaltyPercent / 100);
+        score = Math.round(score * factor);
+      }
+    }
+
     await this.submissionsService.updateAutoScore(submissionId, score);
 
     return score;
@@ -69,7 +90,10 @@ export class EvaluationService implements OnModuleInit {
   }
 
   // Встановлення фінальної оцінки
-  async setFinalScore(submissionId: string, finalScore: number): Promise<StudentSubmission> {
+  async setFinalScore(
+    submissionId: string,
+    finalScore: number,
+  ): Promise<StudentSubmission> {
     return this.submissionsService.updateFinalScore(submissionId, finalScore);
   }
 
@@ -79,10 +103,16 @@ export class EvaluationService implements OnModuleInit {
     if (this.featureExtractor) return this.featureExtractor;
 
     this.transformersModule = await import('@xenova/transformers');
-    const pipeline = await this.transformersModule.pipeline('feature-extraction', MODEL_ID, { quantized: true });
+    const pipeline = await this.transformersModule.pipeline(
+      'feature-extraction',
+      MODEL_ID,
+      { quantized: true },
+    );
 
     if (typeof pipeline !== 'function') {
-      throw new ServiceUnavailableException('Cannot initialize feature-extraction pipeline');
+      throw new ServiceUnavailableException(
+        'Cannot initialize feature-extraction pipeline',
+      );
     }
 
     this.featureExtractor = pipeline as FeatureExtractionPipeline;
@@ -158,7 +188,9 @@ export class EvaluationService implements OnModuleInit {
 
   // ---------------- Витяг тексту з файлів подання ----------------
 
-  private async extractSubmissionFilesText(submission: StudentSubmission): Promise<string> {
+  private async extractSubmissionFilesText(
+    submission: StudentSubmission,
+  ): Promise<string> {
     const files = submission.files ?? [];
     if (!files.length) {
       throw new BadRequestException('Submission has no files');
@@ -166,14 +198,19 @@ export class EvaluationService implements OnModuleInit {
 
     const parts: string[] = [];
     for (const file of files) {
-      parts.push(await this.resolveTextSource({ filePath: file.fileUrl }, 'answer'));
+      parts.push(
+        await this.resolveTextSource({ filePath: file.fileUrl }, 'answer'),
+      );
     }
     return parts.join('\n\n');
   }
 
   // ---------------- Уніфікація джерел тексту ----------------
 
-  private async resolveTextSource(source: TextSource, label: 'reference' | 'answer' = 'answer'): Promise<string> {
+  private async resolveTextSource(
+    source: TextSource,
+    label: 'reference' | 'answer' = 'answer',
+  ): Promise<string> {
     const inline = source.text?.trim();
     if (inline) return inline;
 
@@ -189,7 +226,9 @@ export class EvaluationService implements OnModuleInit {
       return extracted;
     } catch (err) {
       if (err instanceof UnsupportedMimeTypeError) {
-        throw new BadRequestException(`Unsupported ${label} file type: ${err.message}`);
+        throw new BadRequestException(
+          `Unsupported ${label} file type: ${err.message}`,
+        );
       }
       this.logger.error(`Failed to extract ${label} text from ${absolutePath}`);
       throw new ServiceUnavailableException(`Failed to extract ${label} text`);
@@ -213,7 +252,7 @@ export class EvaluationService implements OnModuleInit {
 
     // Випадок: повернувся масив, беремо перший елемент
     if (Array.isArray(raw) && raw.length > 0) {
-      return this.ensureTensorLike(raw[0] as any);
+      return this.ensureTensorLike(raw[0]);
     }
 
     // Випадок: сам тензор
@@ -221,7 +260,9 @@ export class EvaluationService implements OnModuleInit {
       return this.ensureTensorLike(raw as any);
     }
 
-    throw new ServiceUnavailableException('Unexpected output from feature extractor');
+    throw new ServiceUnavailableException(
+      'Unexpected output from feature extractor',
+    );
   }
 
   private ensureTensorLike(value: any): TensorLike {
@@ -231,11 +272,13 @@ export class EvaluationService implements OnModuleInit {
       Array.isArray(value.dims) &&
       value.dims.length >= 2 &&
       value.data &&
-      typeof (value.data as any).length === 'number'
+      typeof value.data.length === 'number'
     ) {
       return value as TensorLike;
     }
-    throw new ServiceUnavailableException('Invalid tensor format returned by model');
+    throw new ServiceUnavailableException(
+      'Invalid tensor format returned by model',
+    );
   }
 
   // Середнє по токенах (mean-pooling) → вектор розмірності hidden_size

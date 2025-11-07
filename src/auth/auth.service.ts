@@ -1,4 +1,8 @@
-import { ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import type { JwtSignOptions } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
@@ -79,10 +83,14 @@ export class AuthService {
       role: user.role,
     };
 
-    const accessSecret = process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET || 'secret';
-    const refreshSecret = process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET || 'secret';
-    const accessExpiresIn = (process.env.JWT_ACCESS_EXP as JwtSignOptions['expiresIn']) ?? '15m';
-    const refreshExpiresIn = (process.env.JWT_REFRESH_EXP as JwtSignOptions['expiresIn']) ?? '7d';
+    const accessSecret =
+      process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET || 'secret';
+    const refreshSecret =
+      process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET || 'secret';
+    const accessExpiresIn =
+      (process.env.JWT_ACCESS_EXP as JwtSignOptions['expiresIn']) ?? '15m';
+    const refreshExpiresIn =
+      (process.env.JWT_REFRESH_EXP as JwtSignOptions['expiresIn']) ?? '7d';
 
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(payload, {
