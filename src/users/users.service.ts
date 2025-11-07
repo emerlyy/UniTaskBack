@@ -15,7 +15,8 @@ export class UsersService {
 
   async create(createUserDto: CreateUserDto): Promise<User> {
     const user = this.usersRepository.create({
-      fullName: createUserDto.fullName,
+      firstName: createUserDto.firstName,
+      lastName: createUserDto.lastName,
       email: createUserDto.email,
       passwordHash: createUserDto.passwordHash,
       role: createUserDto.role ?? UserRole.Student,

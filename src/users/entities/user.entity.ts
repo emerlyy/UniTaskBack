@@ -12,8 +12,11 @@ export class User {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
-  @Column({ name: 'full_name', type: 'text' })
-  fullName!: string;
+  @Column({ name: 'first_name', type: 'text' })
+  firstName!: string;
+
+  @Column({ name: 'last_name', type: 'text' })
+  lastName!: string;
 
   @Column({ type: 'text', unique: true })
   email!: string;

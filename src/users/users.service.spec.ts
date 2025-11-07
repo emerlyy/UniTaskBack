@@ -29,11 +29,12 @@ describe('UsersService', () => {
 
   it('create stores user with default student role', async () => {
     const dto = {
-      fullName: 'Test User',
+      firstName: 'Test',
+      lastName: 'User',
       email: 'user@example.com',
       passwordHash: 'hash',
     };
-    const created = { id: 'user-id', ...dto, role: UserRole.Student };
+    const created = { id: 'user-id', ...dto, role: UserRole.Student } as User;
     (usersRepository.create as jest.Mock).mockReturnValue(created);
     (usersRepository.save as jest.Mock).mockResolvedValue(created);
 
@@ -49,7 +50,8 @@ describe('UsersService', () => {
   it('stripSensitiveFields removes password hash', () => {
     const user = {
       id: 'user-id',
-      fullName: 'Test',
+      firstName: 'Test',
+      lastName: 'User',
       email: 'user@example.com',
       passwordHash: 'hash',
       role: UserRole.Teacher,
@@ -59,7 +61,8 @@ describe('UsersService', () => {
 
     expect(safe).toEqual({
       id: 'user-id',
-      fullName: 'Test',
+      firstName: 'Test',
+      lastName: 'User',
       email: 'user@example.com',
       role: UserRole.Teacher,
     });

@@ -20,7 +20,8 @@ describe('AuthService', () => {
 
   const baseUser = {
     id: 'user-id',
-    fullName: 'Test User',
+    firstName: 'Test',
+    lastName: 'User',
     email: 'user@example.com',
     passwordHash: 'hashed',
     role: UserRole.Student,
@@ -64,11 +65,14 @@ describe('AuthService', () => {
       Promise.resolve({
         ...baseUser,
         passwordHash: dto.passwordHash,
+        firstName: dto.firstName,
+        lastName: dto.lastName,
       }),
     );
     usersService.stripSensitiveFields.mockReturnValue({
       id: baseUser.id,
-      fullName: baseUser.fullName,
+      firstName: baseUser.firstName,
+      lastName: baseUser.lastName,
       email: baseUser.email,
       role: baseUser.role,
     });
@@ -77,7 +81,8 @@ describe('AuthService', () => {
       .mockResolvedValueOnce('refresh-token');
 
     const result = await service.register({
-      fullName: 'Test User',
+      firstName: 'Test',
+      lastName: 'User',
       email: 'user@example.com',
       password: 'secret123',
       role: UserRole.Student,
@@ -91,7 +96,8 @@ describe('AuthService', () => {
     const createMock = usersService.create as unknown as jest.Mock;
     expect(createMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        fullName: 'Test User',
+        firstName: 'Test',
+        lastName: 'User',
         email: 'user@example.com',
         passwordHash: 'hashed-password',
         role: UserRole.Student,
@@ -114,7 +120,8 @@ describe('AuthService', () => {
       refresh_token: 'refresh-token',
       user: {
         id: 'user-id',
-        fullName: 'Test User',
+        firstName: 'Test',
+        lastName: 'User',
         email: 'user@example.com',
         role: UserRole.Student,
       },
@@ -126,7 +133,8 @@ describe('AuthService', () => {
 
     await expect(
       service.register({
-        fullName: 'Test',
+        firstName: 'Test',
+        lastName: 'User',
         email: 'user@example.com',
         password: 'secret123',
         role: UserRole.Student,
@@ -141,7 +149,8 @@ describe('AuthService', () => {
     } as never);
     usersService.stripSensitiveFields.mockReturnValue({
       id: baseUser.id,
-      fullName: baseUser.fullName,
+      firstName: baseUser.firstName,
+      lastName: baseUser.lastName,
       email: baseUser.email,
       role: baseUser.role,
     });
@@ -186,7 +195,8 @@ describe('AuthService', () => {
     usersService.findById.mockResolvedValue(baseUser as never);
     usersService.stripSensitiveFields.mockReturnValue({
       id: baseUser.id,
-      fullName: baseUser.fullName,
+      firstName: baseUser.firstName,
+      lastName: baseUser.lastName,
       email: baseUser.email,
       role: baseUser.role,
     });
