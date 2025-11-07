@@ -17,9 +17,6 @@ export class Course {
   @Column({ type: 'text' })
   name!: string;
 
-  @Column({ type: 'text', nullable: true })
-  description?: string | null;
-
   @Column({ name: 'teacher_id' })
   teacherId!: string;
 

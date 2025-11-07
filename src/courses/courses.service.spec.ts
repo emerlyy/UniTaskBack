@@ -31,8 +31,8 @@ describe('CoursesService', () => {
   });
 
   it('createCourse persists a course with teacherId', async () => {
-    const dto = { name: 'Math', description: 'Desc' };
-    const created = { id: 'course-id', ...dto, teacherId: 'teacher-id' };
+    const dto = { name: 'Math' };
+    const created = { id: 'course-id', ...dto, teacherId: 'teacher-id' } as Course;
 
     (coursesRepository.create as jest.Mock).mockReturnValue(created);
     (coursesRepository.save as jest.Mock).mockResolvedValue(created);
@@ -41,7 +41,6 @@ describe('CoursesService', () => {
 
     expect(coursesRepository.create).toHaveBeenCalledWith({
       name: 'Math',
-      description: 'Desc',
       teacherId: 'teacher-id',
     });
     expect(result).toEqual(created);

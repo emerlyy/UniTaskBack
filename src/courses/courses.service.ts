@@ -14,7 +14,6 @@ export class CoursesService {
   async createCourse(teacherId: string, dto: CreateCourseDto): Promise<Course> {
     const course = this.coursesRepository.create({
       name: dto.name,
-      description: dto.description ?? null,
       teacherId,
     });
 
