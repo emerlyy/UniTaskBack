@@ -8,58 +8,20 @@ import {
 import { join, isAbsolute } from 'node:path';
 import { SubmissionsService } from '../submissions/submissions.service';
 import type { StudentSubmission } from '../submissions/entities/student-submission.entity';
-import {
-  UnsupportedMimeTypeError,
-  extractText,
-} from '../utils/text-extraction.util';
+import { UnsupportedMimeTypeError, extractText } from '../utils/text-extraction.util';
 import type { TextSource } from './types';
 
+// ---- Типи для transformers ----
 type TransformersModule = typeof import('@xenova/transformers');
+type FeatureExtractionPipeline = (text: string, options?: Record<string, unknown>) => Promise<unknown>;
 
-type FeatureExtractionPipeline = (
-  text: string,
-  options?: Record<string, unknown>,
-) => Promise<unknown>;
-
-type TextClassificationPipeline = (
-  inputs:
-    | string
-    | { text: string; text_pair?: string }[]
-    | { text: string; text_pair?: string },
-  options?: Record<string, unknown>,
-) => Promise<unknown>;
-
-type SupportedTypedArray =
-  | Float32Array
-  | Float64Array
-  | Int32Array
-  | Int16Array
-  | Int8Array
-  | Uint32Array
-  | Uint16Array
-  | Uint8Array
-  | BigInt64Array
-  | BigUint64Array;
-
+// ---- Мінімальний формат тензора ----
 interface TensorLike {
-  data: SupportedTypedArray;
-  dims: readonly number[];
+  data: ArrayLike<number>;
+  dims: number[];
 }
 
-interface PipelineOutputWithMask {
-  attention_mask?: unknown;
-  last_hidden_state?: unknown;
-}
-
-interface NliPrediction {
-  label: string;
-  score: number;
-}
-
-const DEFAULT_MODEL_ID =
-  process.env.EVAL_MODEL_ID ?? 'Xenova/paraphrase-MiniLM-L6-v2';
-const DEFAULT_NLI_MODEL_ID =
-  process.env.EVAL_NLI_MODEL_ID ?? 'Xenova/nli-deberta-v3-small';
+const MODEL_ID = process.env.EVAL_MODEL_ID ?? 'Xenova/paraphrase-MiniLM-L6-v2';
 
 @Injectable()
 export class EvaluationService implements OnModuleInit {
@@ -67,34 +29,22 @@ export class EvaluationService implements OnModuleInit {
 
   private transformersModule?: TransformersModule;
   private featureExtractor?: FeatureExtractionPipeline;
-  private nliClassifier?: TextClassificationPipeline;
 
+  // Кеш ембеддингів еталонного тексту (щоб не перераховувати щоразу)
   private readonly referenceCache = new Map<string, Float32Array>();
 
   constructor(private readonly submissionsService: SubmissionsService) {}
 
   async onModuleInit(): Promise<void> {
-    await this.ensurePipelineReady();
+    await this.ensurePipeline();
+    // невеликий warmup, щоб підвантажити модель
     await this.embed('warmup');
-    this.logger.log(`Evaluation model ready: ${DEFAULT_MODEL_ID}`);
+    this.logger.log(`Evaluation model ready: ${MODEL_ID}`);
   }
 
-  async embed(text: string): Promise<{ embedding: Float32Array }> {
-    const extractor = await this.ensurePipelineReady();
-    const rawOutput = await extractor(text, {
-      pooling: 'none',
-      normalize: false,
-      return_attention_mask: true,
-    });
+  // ---------------- Публічні методи ----------------
 
-    const { lastHiddenState, attentionMask } =
-      this.parseFeatureExtractionOutput(rawOutput);
-    const pooled = this.meanPool(lastHiddenState, attentionMask);
-    const normalized = this.l2Normalize(pooled);
-
-    return { embedding: normalized };
-  }
-
+  // Автооцінювання за submissionId: дістаємо тексти, рахуємо cos→score, зберігаємо autoScore
   async autoEvaluate(submissionId: string): Promise<number> {
     const submission = await this.submissionsService.findById(submissionId);
 
@@ -102,457 +52,223 @@ export class EvaluationService implements OnModuleInit {
       throw new BadRequestException('Task does not have a reference file');
     }
 
-    const referenceSource: TextSource = {
-      filePath: submission.task.referenceFileUrl,
-    };
-
-    const referenceText = await this.resolveTextSource(
-      referenceSource,
-      'reference',
-    );
-
+    const referenceText = await this.resolveTextSource({ filePath: submission.task.referenceFileUrl }, 'reference');
     const answerText = await this.extractSubmissionFilesText(submission);
-    const score = await this.scoreTexts(referenceText, answerText);
 
+    const score = await this.scoreTexts(referenceText, answerText);
     await this.submissionsService.updateAutoScore(submissionId, score);
+
     return score;
   }
 
+  // Загальний метод оцінювання для довільних джерел
   async score(reference: TextSource, answer: TextSource): Promise<number> {
-    const referenceText = await this.resolveTextSource(reference, 'reference');
-    const answerText = await this.resolveTextSource(answer, 'answer');
-    return this.scoreTexts(referenceText, answerText);
+    const ref = await this.resolveTextSource(reference, 'reference');
+    const ans = await this.resolveTextSource(answer, 'answer');
+    return this.scoreTexts(ref, ans);
   }
 
-  async setFinalScore(
-    submissionId: string,
-    finalScore: number,
-  ): Promise<StudentSubmission> {
+  // Встановлення фінальної оцінки
+  async setFinalScore(submissionId: string, finalScore: number): Promise<StudentSubmission> {
     return this.submissionsService.updateFinalScore(submissionId, finalScore);
   }
 
-  private async ensureTransformersModule(): Promise<TransformersModule> {
-    if (!this.transformersModule) {
-      this.transformersModule = await import('@xenova/transformers');
-    }
-    return this.transformersModule;
-  }
+  // ---------------- Ядро: ембеддинги та подібність ----------------
 
-  private async ensurePipelineReady(): Promise<FeatureExtractionPipeline> {
-    if (this.featureExtractor) {
-      return this.featureExtractor;
-    }
+  private async ensurePipeline(): Promise<FeatureExtractionPipeline> {
+    if (this.featureExtractor) return this.featureExtractor;
 
-    const transformers = await this.ensureTransformersModule();
-
-    const pipeline = await transformers.pipeline(
-      'feature-extraction',
-      DEFAULT_MODEL_ID,
-      { quantized: true },
-    );
+    this.transformersModule = await import('@xenova/transformers');
+    const pipeline = await this.transformersModule.pipeline('feature-extraction', MODEL_ID, { quantized: true });
 
     if (typeof pipeline !== 'function') {
-      throw new ServiceUnavailableException(
-        'Unable to initialise feature-extraction pipeline',
-      );
+      throw new ServiceUnavailableException('Cannot initialize feature-extraction pipeline');
     }
 
     this.featureExtractor = pipeline as FeatureExtractionPipeline;
     return this.featureExtractor;
   }
 
-  private async ensureNliClassifier(): Promise<TextClassificationPipeline> {
-    if (this.nliClassifier) {
-      return this.nliClassifier;
-    }
+  // Отримання ембеддинга тексту: transformer → last_hidden_state → mean-pooling
+  private async embed(text: string): Promise<{ embedding: Float32Array }> {
+    const extractor = await this.ensurePipeline();
+    const raw = await extractor(text, {
+      pooling: 'none',
+      normalize: false,
+      return_attention_mask: false, // спрощуємо: без маски, середнє по токенах
+    });
 
-    const transformers = await this.ensureTransformersModule();
-    const pipeline = await transformers.pipeline(
-      'text-classification',
-      DEFAULT_NLI_MODEL_ID,
-      { quantized: true },
-    );
-
-    if (typeof pipeline !== 'function') {
-      throw new ServiceUnavailableException(
-        'Unable to initialise NLI classification pipeline',
-      );
-    }
-
-    this.nliClassifier = pipeline as TextClassificationPipeline;
-    return this.nliClassifier;
+    const lastHiddenState = this.extractLastHiddenState(raw);
+    const pooled = this.meanPool(lastHiddenState);
+    // Додаткове l2-нормування не потрібне: косинус рахуємо з власними нормами
+    return { embedding: pooled };
   }
 
-  private parseFeatureExtractionOutput(raw: unknown): {
-    lastHiddenState: TensorLike;
-    attentionMask?: TensorLike;
-  } {
-    if (this.isTensorLike(raw)) {
-      return {
-        lastHiddenState: raw,
-        attentionMask: this.extractOptionalTensor(
-          (raw as PipelineOutputWithMask).attention_mask,
-        ),
-      };
-    }
-
-    if (Array.isArray(raw)) {
-      const firstElement: unknown = raw.at(0);
-      if (!firstElement) {
-        throw new ServiceUnavailableException(
-          'Empty output from feature extractor',
-        );
-      }
-
-      return {
-        lastHiddenState: this.ensureTensor(firstElement),
-        attentionMask: this.extractOptionalTensor(
-          (raw as PipelineOutputWithMask).attention_mask,
-        ),
-      };
-    }
-
-    if (typeof raw === 'object' && raw !== null) {
-      const obj = raw as PipelineOutputWithMask & Record<string, unknown>;
-      if (obj.last_hidden_state !== undefined) {
-        return {
-          lastHiddenState: this.ensureTensor(obj.last_hidden_state),
-          attentionMask: this.extractOptionalTensor(obj.attention_mask),
-        };
-      }
-    }
-
-    throw new ServiceUnavailableException(
-      'Unexpected output from feature extractor',
-    );
+  // Оцінка двох текстів: cos ∈ [-1,1] → шкала [0,100]
+  private async scoreTexts(ref: string, ans: string): Promise<number> {
+    const similarity = await this.similarity(ref, ans);
+    return this.toScore(similarity);
   }
 
-  private ensureTensor(value: unknown): TensorLike {
-    if (this.isTensorLike(value)) {
-      return value;
-    }
+  private async similarity(a: string, b: string): Promise<number> {
+    const [refEmb, ansEmb] = await Promise.all([
+      this.getReferenceEmbedding(a),
+      this.embed(b).then((x) => x.embedding),
+    ]);
 
-    throw new ServiceUnavailableException(
-      'Invalid tensor returned by feature extractor',
-    );
+    return this.cosine(refEmb, ansEmb);
   }
 
-  private extractOptionalTensor(value: unknown): TensorLike | undefined {
-    if (value === undefined) {
-      return undefined;
-    }
-
-    if (this.isTensorLike(value)) {
-      return value;
-    }
-
-    return undefined;
-  }
-
-  private isTensorLike(value: unknown): value is TensorLike {
-    if (typeof value !== 'object' || value === null) {
-      return false;
-    }
-
-    const candidate = value as { data?: unknown; dims?: unknown };
-
-    if (!candidate.data || !candidate.dims) {
-      return false;
-    }
-
-    if (!Array.isArray(candidate.dims)) {
-      return false;
-    }
-
-    const dimsValid = candidate.dims.every(
-      (dim): dim is number => typeof dim === 'number' && Number.isFinite(dim),
-    );
-
-    if (!dimsValid) {
-      return false;
-    }
-
-    if (!ArrayBuffer.isView(candidate.data)) {
-      return false;
-    }
-
-    return !(candidate.data instanceof DataView);
-  }
-
-  private meanPool(
-    lastHiddenState: TensorLike,
-    attentionMask?: TensorLike,
-  ): Float32Array {
-    const dims = lastHiddenState.dims;
-
-    if (dims.length < 2) {
-      throw new ServiceUnavailableException('Unexpected tensor dimensions');
-    }
-
-    const tokens = dims.length === 3 ? dims[1] : dims[0];
-    const dimension = dims.length === 3 ? dims[2] : (dims[1] ?? 0);
-
-    if (!tokens || !dimension) {
-      throw new ServiceUnavailableException('Invalid tensor shape');
-    }
-
-    const output = new Float32Array(dimension);
-    const maskData = attentionMask?.data;
-    const hiddenStateData = lastHiddenState.data;
-
-    let included = 0;
-
-    for (let tokenIndex = 0; tokenIndex < tokens; tokenIndex += 1) {
-      let includeToken = true;
-      if (maskData && maskData.length > tokenIndex) {
-        const maskValue = maskData[tokenIndex];
-        includeToken = Number(maskValue) > 0.5;
-      }
-
-      if (!includeToken) {
-        continue;
-      }
-
-      included += 1;
-      const offset = tokenIndex * dimension;
-      for (let dimIndex = 0; dimIndex < dimension; dimIndex += 1) {
-        const rawValue = hiddenStateData[offset + dimIndex];
-        const numericValue =
-          typeof rawValue === 'bigint' ? Number(rawValue) : rawValue;
-        output[dimIndex] += numericValue;
-      }
-    }
-
-    const divisor = included > 0 ? included : tokens;
-    if (divisor > 0) {
-      for (let dimIndex = 0; dimIndex < dimension; dimIndex += 1) {
-        output[dimIndex] /= divisor;
-      }
-    }
-
-    return output;
-  }
-
-  private l2Normalize(vector: Float32Array): Float32Array {
-    let sumSquares = 0;
-    for (let index = 0; index < vector.length; index += 1) {
-      const value = vector[index];
-      sumSquares += value * value;
-    }
-
-    if (sumSquares === 0) {
-      return Float32Array.from(vector);
-    }
-
-    const scale = 1 / Math.sqrt(sumSquares);
-    return Float32Array.from(vector, (value) => value * scale);
-  }
-
+  // Косинусна подібність: cos(a, b) = (a·b) / (||a|| * ||b||)
   private cosine(a: Float32Array, b: Float32Array): number {
-    const length = Math.min(a.length, b.length);
+    const len = Math.min(a.length, b.length);
     let dot = 0;
-    for (let index = 0; index < length; index += 1) {
-      dot += a[index] * b[index];
+    let normA = 0;
+    let normB = 0;
+
+    for (let i = 0; i < len; i++) {
+      const va = a[i];
+      const vb = b[i];
+      dot += va * vb;
+      normA += va * va;
+      normB += vb * vb;
     }
 
-    return dot;
+    const denom = Math.sqrt(normA) * Math.sqrt(normB);
+    if (denom === 0) return 0;
+    return dot / denom;
   }
 
+  // Лінійне відображення з [-1,1] у [0,100]
   private toScore(similarity: number): number {
     const clamped = Math.max(-1, Math.min(1, similarity));
-    const percentage = ((clamped + 1) / 2) * 100;
-    return Math.max(0, Math.min(100, Math.round(percentage)));
+    const scaled = ((clamped + 1) / 2) * 100;
+    return Math.round(Math.max(0, Math.min(100, scaled)));
   }
 
-  private async getReferenceEmbedding(
-    referenceText: string,
-  ): Promise<Float32Array> {
-    const cached = this.referenceCache.get(referenceText);
-    if (cached) {
-      return cached;
-    }
+  // Кеш еталонних ембеддингів
+  private async getReferenceEmbedding(text: string): Promise<Float32Array> {
+    const cached = this.referenceCache.get(text);
+    if (cached) return cached;
 
-    const { embedding } = await this.embed(referenceText);
-    this.referenceCache.set(referenceText, embedding);
+    const { embedding } = await this.embed(text);
+    this.referenceCache.set(text, embedding);
     return embedding;
   }
 
-  private async extractSubmissionFilesText(
-    submission: StudentSubmission,
-  ): Promise<string> {
-    if (!submission.files || submission.files.length === 0) {
-      throw new BadRequestException('Submission has no files to evaluate');
+  // ---------------- Витяг тексту з файлів подання ----------------
+
+  private async extractSubmissionFilesText(submission: StudentSubmission): Promise<string> {
+    const files = submission.files ?? [];
+    if (!files.length) {
+      throw new BadRequestException('Submission has no files');
     }
 
-    const chunks: string[] = [];
-    for (const file of submission.files) {
-      chunks.push(
-        await this.resolveTextSource({ filePath: file.fileUrl }, 'answer'),
-      );
+    const parts: string[] = [];
+    for (const file of files) {
+      parts.push(await this.resolveTextSource({ filePath: file.fileUrl }, 'answer'));
     }
-
-    return chunks.join('\n\n');
+    return parts.join('\n\n');
   }
 
-  private async resolveTextSource(
-    source: TextSource,
-    label: 'reference' | 'answer',
-  ): Promise<string> {
-    const candidateText = source.text?.trim();
-    if (candidateText) {
-      return candidateText;
-    }
+  // ---------------- Уніфікація джерел тексту ----------------
+
+  private async resolveTextSource(source: TextSource, label: 'reference' | 'answer' = 'answer'): Promise<string> {
+    const inline = source.text?.trim();
+    if (inline) return inline;
 
     if (!source.filePath) {
-      throw new BadRequestException(
-        `No ${label} text or file path provided for evaluation`,
-      );
+      throw new BadRequestException(`No ${label} text or file path provided`);
     }
 
     const absolutePath = this.resolveFilePath(source.filePath);
 
     try {
       const extracted = await extractText(absolutePath);
-      if (!extracted) {
-        throw new ServiceUnavailableException(
-          `Unable to extract ${label} text from file`,
-        );
-      }
-
+      if (!extracted) throw new Error('empty extract');
       return extracted;
-    } catch (error) {
-      if (error instanceof UnsupportedMimeTypeError) {
-        throw new BadRequestException(
-          `Unsupported ${label} file type: ${error.message}`,
-        );
+    } catch (err) {
+      if (err instanceof UnsupportedMimeTypeError) {
+        throw new BadRequestException(`Unsupported ${label} file type: ${err.message}`);
       }
-
-      this.logger.error(
-        `Failed to extract ${label} text from ${absolutePath}`,
-        error instanceof Error ? error.stack : undefined,
-      );
+      this.logger.error(`Failed to extract ${label} text from ${absolutePath}`);
       throw new ServiceUnavailableException(`Failed to extract ${label} text`);
     }
   }
 
   private resolveFilePath(filePath: string): string {
-    if (isAbsolute(filePath)) {
-      return filePath;
-    }
-
-    const sanitized = filePath.replace(/^[\\/]+/, '');
-    return join(process.cwd(), sanitized);
+    if (isAbsolute(filePath)) return filePath;
+    // прибираємо початкові / або \ для надійності
+    return join(process.cwd(), filePath.replace(/^[\\/]+/, ''));
   }
 
-  private async scoreTexts(
-    referenceText: string,
-    answerText: string,
-  ): Promise<number> {
-    const similarity = await this.similarityTexts(referenceText, answerText);
-    const baseScore = this.toScore(similarity);
+  // ---------------- Парсинг виходу трансформера ----------------
 
-    if (baseScore === 0) {
-      return 0;
+  private extractLastHiddenState(raw: unknown): TensorLike {
+    // Випадок: повернувся об'єкт { last_hidden_state: Tensor, ... }
+    if (raw && typeof raw === 'object' && (raw as any).last_hidden_state) {
+      const t = (raw as any).last_hidden_state;
+      return this.ensureTensorLike(t);
     }
 
-    const contradictionProbability = await this.contradictionProbability(
-      referenceText,
-      answerText,
-    );
-
-    return this.applyContradictionPenalty(baseScore, contradictionProbability);
-  }
-
-  private async similarityTexts(
-    referenceText: string,
-    answerText: string,
-  ): Promise<number> {
-    const [refEmbedding, ansEmbedding] = await Promise.all([
-      this.getReferenceEmbedding(referenceText),
-      this.embed(answerText).then((result) => result.embedding),
-    ]);
-
-    return this.cosine(refEmbedding, ansEmbedding);
-  }
-
-  private async contradictionProbability(
-    referenceText: string,
-    answerText: string,
-  ): Promise<number> {
-    try {
-      const classifier = await this.ensureNliClassifier();
-      const raw = await classifier([
-        { text: referenceText, text_pair: answerText },
-      ]);
-
-      const predictions = this.parseNliOutput(raw);
-      const contradiction = predictions.find((prediction) =>
-        prediction.label.toLowerCase().includes('contradiction'),
-      );
-
-      return contradiction?.score ?? 0;
-    } catch (error) {
-      this.logger.warn(
-        'Failed to evaluate contradiction probability',
-        error instanceof Error ? error.message : undefined,
-      );
-      return 0;
-    }
-  }
-
-  private parseNliOutput(raw: unknown): NliPrediction[] {
-    if (this.isNliPrediction(raw)) {
-      return [raw];
+    // Випадок: повернувся масив, беремо перший елемент
+    if (Array.isArray(raw) && raw.length > 0) {
+      return this.ensureTensorLike(raw[0] as any);
     }
 
-    if (Array.isArray(raw)) {
-      const collected: NliPrediction[] = [];
-      for (const entry of raw) {
-        if (this.isNliPrediction(entry)) {
-          collected.push(entry);
-          continue;
-        }
+    // Випадок: сам тензор
+    if (raw && typeof raw === 'object') {
+      return this.ensureTensorLike(raw as any);
+    }
 
-        if (Array.isArray(entry)) {
-          for (const nested of entry) {
-            if (this.isNliPrediction(nested)) {
-              collected.push(nested);
-            }
-          }
-        }
+    throw new ServiceUnavailableException('Unexpected output from feature extractor');
+  }
+
+  private ensureTensorLike(value: any): TensorLike {
+    if (
+      value &&
+      typeof value === 'object' &&
+      Array.isArray(value.dims) &&
+      value.dims.length >= 2 &&
+      value.data &&
+      typeof (value.data as any).length === 'number'
+    ) {
+      return value as TensorLike;
+    }
+    throw new ServiceUnavailableException('Invalid tensor format returned by model');
+  }
+
+  // Середнє по токенах (mean-pooling) → вектор розмірності hidden_size
+  private meanPool(lastHiddenState: TensorLike): Float32Array {
+    // dims зазвичай [batch, tokens, hidden] або [tokens, hidden]
+    const dims = lastHiddenState.dims;
+    const data = lastHiddenState.data;
+
+    let tokens: number;
+    let hidden: number;
+
+    if (dims.length === 3) {
+      tokens = dims[1];
+      hidden = dims[2];
+    } else {
+      tokens = dims[0];
+      hidden = dims[1];
+    }
+
+    const out = new Float32Array(hidden);
+
+    for (let t = 0; t < tokens; t++) {
+      const offset = t * hidden;
+      for (let h = 0; h < hidden; h++) {
+        out[h] += Number(data[offset + h]);
       }
-      return collected;
     }
 
-    return [];
-  }
-
-  private isNliPrediction(value: unknown): value is NliPrediction {
-    if (typeof value !== 'object' || value === null) {
-      return false;
+    const inv = tokens > 0 ? 1 / tokens : 1;
+    for (let h = 0; h < hidden; h++) {
+      out[h] *= inv;
     }
 
-    const candidate = value as { label?: unknown; score?: unknown };
-    return (
-      typeof candidate.label === 'string' && typeof candidate.score === 'number'
-    );
-  }
-
-  private applyContradictionPenalty(
-    baseScore: number,
-    contradictionProbability: number,
-  ): number {
-    const threshold = 0.4;
-    if (contradictionProbability <= threshold) {
-      return baseScore;
-    }
-
-    const severity = Math.min(
-      1,
-      (contradictionProbability - threshold) / (1 - threshold),
-    );
-    const penaltyFactor = Math.max(0, 1 - severity);
-    const adjusted = Math.round(baseScore * penaltyFactor);
-    return Math.max(0, adjusted);
+    return out;
   }
 }

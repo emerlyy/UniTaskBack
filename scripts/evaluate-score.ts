@@ -41,7 +41,7 @@ async function main() {
     const referenceText =
       'Deep learning models can capture semantic relationships between sentences.';
     const submissionText =
-      'Deep learning models can not capture semantic relationships between sentences.';
+      'Yarik lapa loves his mom';
 
     const score = await evaluationService.score(
       { text: referenceText },
