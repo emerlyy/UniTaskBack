@@ -34,13 +34,13 @@ export class TasksService {
       throw new ForbiddenException('Only the course owner can create tasks');
     }
 
-    const deadline = this.parseDeadline(dto.deadline);
+    const dueDate = this.parseDueDate(dto.dueDate);
 
     const task = this.tasksRepository.create({
       courseId: dto.courseId,
       title: dto.title,
       description: dto.description ?? null,
-      deadline,
+      dueDate,
       latePenaltyPercent: dto.latePenaltyPercent ?? 0,
       referenceFileUrl: dto.referenceFileUrl,
       status: dto.status ?? TaskStatus.Draft,
@@ -73,7 +73,7 @@ export class TasksService {
 
     return this.tasksRepository.find({
       where: { courseId },
-      order: { deadline: 'ASC' },
+      order: { dueDate: 'ASC' },
     });
   }
 
@@ -101,8 +101,8 @@ export class TasksService {
     if (dto.description !== undefined) {
       task.description = dto.description ?? null;
     }
-    if (dto.deadline !== undefined) {
-      task.deadline = this.parseDeadline(dto.deadline);
+    if (dto.dueDate !== undefined) {
+      task.dueDate = this.parseDueDate(dto.dueDate);
     }
     if (dto.latePenaltyPercent !== undefined) {
       task.latePenaltyPercent = dto.latePenaltyPercent;
@@ -138,14 +138,14 @@ export class TasksService {
     return this.tasksRepository.save(task);
   }
 
-  private parseDeadline(value: string | Date): Date {
+  private parseDueDate(value: string | Date): Date {
     if (value instanceof Date) {
       return value;
     }
 
     const parsed = new Date(value);
     if (Number.isNaN(parsed.getTime())) {
-      throw new BadRequestException('Invalid deadline');
+      throw new BadRequestException('Invalid due date');
     }
     return parsed;
   }

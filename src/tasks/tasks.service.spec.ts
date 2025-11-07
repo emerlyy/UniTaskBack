@@ -47,7 +47,7 @@ describe('TasksService', () => {
       courseId: 'course-id',
       title: 'Task title',
       description: 'Details',
-      deadline: '2025-01-01T00:00:00Z',
+      dueDate: '2025-01-01T00:00:00Z',
       referenceFileUrl: '/uploads/reference.pdf',
       latePenaltyPercent: 10,
       status: TaskStatus.Active,
@@ -58,7 +58,7 @@ describe('TasksService', () => {
       teacherId: 'teacher-id',
     });
 
-    const created = { id: 'task-id', ...dto, deadline: new Date(dto.deadline) };
+    const created = { id: 'task-id', ...dto, dueDate: new Date(dto.dueDate) };
     (tasksRepository.create as jest.Mock).mockReturnValue(created);
     (tasksRepository.save as jest.Mock).mockResolvedValue(created);
 
@@ -87,7 +87,7 @@ describe('TasksService', () => {
         {
           courseId: 'course-id',
           title: 'Task',
-          deadline: new Date().toISOString(),
+          dueDate: new Date().toISOString(),
           referenceFileUrl: '/file',
         },
         'teacher-id',
@@ -95,7 +95,7 @@ describe('TasksService', () => {
     ).rejects.toThrow(ForbiddenException);
   });
 
-  it('create throws when deadline invalid', async () => {
+  it('create throws when due date invalid', async () => {
     (coursesRepository.findOne as jest.Mock).mockResolvedValue({
       id: 'course-id',
       teacherId: 'teacher-id',
@@ -106,7 +106,7 @@ describe('TasksService', () => {
         {
           courseId: 'course-id',
           title: 'Task',
-          deadline: 'not-a-date',
+          dueDate: 'not-a-date',
           referenceFileUrl: '/file',
         },
         'teacher-id',
@@ -143,7 +143,7 @@ describe('TasksService', () => {
 
     expect(tasksRepository.find).toHaveBeenCalledWith({
       where: { courseId: 'course-id' },
-      order: { deadline: 'ASC' },
+      order: { dueDate: 'ASC' },
     });
   });
 
@@ -160,7 +160,7 @@ describe('TasksService', () => {
       id: 'task-id',
       title: 'Old',
       description: 'Old desc',
-      deadline: new Date(),
+      dueDate: new Date(),
       latePenaltyPercent: 0,
       status: TaskStatus.Draft,
       course: { teacherId: 'teacher-id' },

@@ -22,7 +22,7 @@ export class CreateTaskDto {
   description?: string;
 
   @IsString()
-  deadline!: string;
+  dueDate!: string;
 
   @IsInt()
   @Min(0)

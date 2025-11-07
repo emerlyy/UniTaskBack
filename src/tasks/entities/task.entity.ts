@@ -21,7 +21,7 @@ export class Task {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
-  @Column({ name: 'course_id' })
+  @Column({ name: 'course_id', type: 'uuid' })
   courseId!: string;
 
   @ManyToOne(() => Course, (course) => course.tasks, {
@@ -36,8 +36,8 @@ export class Task {
   @Column({ type: 'text', nullable: true })
   description?: string | null;
 
-  @Column({ type: 'timestamptz' })
-  deadline!: Date;
+  @Column({ name: 'due_date', type: 'timestamptz' })
+  dueDate!: Date;
 
   @Column({ name: 'late_penalty_percent', type: 'int', default: 0 })
   latePenaltyPercent!: number;

@@ -19,7 +19,7 @@ export class UpdateTaskDto {
   description?: string;
 
   @IsOptional()
-  deadline?: Date | string;
+  dueDate?: Date | string;
 
   @IsInt()
   @Min(0)
