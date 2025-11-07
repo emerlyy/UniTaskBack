@@ -1,4 +1,4 @@
-import { ConfigService } from '@nestjs/config';
+// No ConfigService is needed; we use env vars directly
 
 // Capture constructor calls of passport-jwt Strategy
 const strategyCtor = jest.fn();
@@ -26,16 +26,11 @@ describe('JwtRefreshStrategy (secrets)', () => {
     strategyCtor.mockClear();
   });
 
-  it('uses jwt.refreshSecret when provided', () => {
-    const cfg = {
-      get: (key: string) => {
-        if (key === 'jwt.refreshSecret') return 'refresh-secret';
-        if (key === 'jwt.secret') return 'fallback-secret';
-        return undefined;
-      },
-    } as unknown as ConfigService;
+  it('uses JWT_REFRESH_SECRET when provided', () => {
+    process.env.JWT_REFRESH_SECRET = 'refresh-secret';
+    process.env.JWT_SECRET = 'fallback-secret';
 
-    new JwtRefreshStrategy(cfg);
+    new JwtRefreshStrategy();
 
     expect(strategyCtor).toHaveBeenCalledTimes(1);
     expect(strategyCtor).toHaveBeenCalledWith(
@@ -43,16 +38,11 @@ describe('JwtRefreshStrategy (secrets)', () => {
     );
   });
 
-  it('falls back to jwt.secret when refreshSecret is missing', () => {
-    const cfg = {
-      get: (key: string) => {
-        if (key === 'jwt.refreshSecret') return undefined;
-        if (key === 'jwt.secret') return 'fallback-secret';
-        return undefined;
-      },
-    } as unknown as ConfigService;
+  it('falls back to JWT_SECRET when refreshSecret is missing', () => {
+    delete process.env.JWT_REFRESH_SECRET;
+    process.env.JWT_SECRET = 'fallback-secret';
 
-    new JwtRefreshStrategy(cfg);
+    new JwtRefreshStrategy();
 
     expect(strategyCtor).toHaveBeenCalledTimes(1);
     expect(strategyCtor).toHaveBeenCalledWith(

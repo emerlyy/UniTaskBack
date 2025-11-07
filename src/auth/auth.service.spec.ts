@@ -1,5 +1,4 @@
 import { ConflictException, UnauthorizedException } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { AuthService } from './auth.service';
@@ -17,7 +16,7 @@ describe('AuthService', () => {
   let service: AuthService;
   let usersService: jest.Mocked<UsersService>;
   let jwtService: jest.Mocked<JwtService>;
-  let configService: jest.Mocked<ConfigService>;
+  const originalEnv = process.env;
 
   const baseUser = {
     id: 'user-id',
@@ -39,28 +38,24 @@ describe('AuthService', () => {
       signAsync: jest.fn(),
     } as unknown as jest.Mocked<JwtService>;
 
-    configService = {
-      get: jest.fn((key: string) => {
-        if (key === 'jwt.accessSecret') return 'access-secret';
-        if (key === 'jwt.refreshSecret') return 'refresh-secret';
-        if (key === 'jwt.secret') return 'test-secret';
-        if (key === 'jwt.accessExpiresIn') return '15m';
-        if (key === 'jwt.refreshExpiresIn') return '7d';
-        return undefined;
-      }),
-    } as unknown as jest.Mocked<ConfigService>;
-
     jest.clearAllMocks();
+    process.env = { ...originalEnv };
+    process.env.JWT_ACCESS_SECRET = 'access-secret';
+    process.env.JWT_REFRESH_SECRET = 'refresh-secret';
+    process.env.JWT_SECRET = 'test-secret';
+    process.env.JWT_ACCESS_EXP = '15m';
+    process.env.JWT_REFRESH_EXP = '7d';
     (mockedBcrypt.hash as unknown as jest.Mock).mockResolvedValue(
       'hashed-password',
     );
     (mockedBcrypt.compare as unknown as jest.Mock).mockResolvedValue(true);
 
-    service = new AuthService(usersService, jwtService, configService);
+    service = new AuthService(usersService, jwtService);
   });
 
   afterEach(() => {
     jest.clearAllMocks();
+    process.env = originalEnv;
   });
 
   it('register hashes password and returns tokens', async () => {
